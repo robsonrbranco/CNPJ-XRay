@@ -28,6 +28,24 @@ para cima com folga, porque VARCHAR curto demais trunca dado em silêncio.
     nome_representante                60      100
     descricao (domínio)              150      200
 
+Charset
+-------
+As colunas de texto não declaram charset: herdam o padrão do banco, criado com
+`DEFAULT CHARACTER SET WIN1252 COLLATION WIN_PTBR`.
+
+WIN1252 e não UTF8 porque a fonte é o cadastro de pessoa jurídica brasileiro,
+em português do Brasil, e os arquivos da Receita vêm em latin-1. UTF8 não
+acrescenta nenhum caractere útil aqui e cobra 4 bytes por caractere no tamanho
+declarado da coluna — em `estabelecimento`, 8,5 KB por registro contra 2,1 KB.
+Medido: o banco fica 27% menor, com a mesma velocidade de carga.
+
+A troca é segura porque WIN1252 e latin-1 só divergem na faixa 0x80-0x9F, e uma
+varredura de ~800 MB da base (empresa, estabelecimento, socios, cnae,
+municipio) não encontrou UM byte nessa faixa.
+
+WIN_PTBR ordena acento como o português do Brasil espera: sem ela, ORDER BY
+razao_social joga todo nome iniciado por acento para depois do Z.
+
 Atenção ao parsear os CSV da RFB: o campo `complemento` contém ";" dentro de
 valor entre aspas (ex.: "BLOCO: 01; APT: 144;"). Split ingênuo por ";" corrompe
 ~5% das linhas de estabelecimento — o parser precisa honrar aspas.
@@ -73,6 +91,10 @@ class Column:
         # Sem PRIMARY KEY, sem NOT NULL, sem FK: a base de carga não impõe
         # nenhuma restrição de integridade. Ver a nota sobre travas no topo
         # do módulo.
+        # Sem CHARACTER SET / COLLATE por coluna: o banco é criado com
+        # DEFAULT CHARACTER SET WIN1252 COLLATION WIN_PTBR (ver
+        # db.connection.create_database_sql), e toda coluna de texto herda daí.
+        # Verificado: coluna declarada sem cláusula sai como WIN1252/WIN_PTBR.
         return f"{self.name} {self.fb_type}"
 
 

@@ -168,11 +168,12 @@ def carregar_tabela(
     total = 0
     inicio = time.time()
 
-    for i, arquivo in enumerate(arquivos):
+    with loader.Carregador(con, cfg) as carregador:
+      for i, arquivo in enumerate(arquivos):
         t_arquivo = time.time()
         linhas_arquivo = 0
         for bloco in leitura.blocos_csv(arquivo, colunas):
-            linhas_arquivo += loader.carregar(con, bloco, tabela, cfg)
+            linhas_arquivo += carregador.carregar(bloco, tabela)
         total += linhas_arquivo
 
         dt = max(time.time() - t_arquivo, 1e-6)
@@ -250,12 +251,15 @@ def _worker(tarefa: tuple[str, str, int, int, str]) -> tuple[str, str, int, int,
     total = 0
 
     with connection.conectar(cfg) as con:
-        for i, bloco in enumerate(leitura.blocos_csv(Path(arquivo), colunas)):
-            # Este worker fica só com um bloco a cada n_fatias. Ler os demais
-            # custa a descompressão, que é ruído perto do tempo de carga.
-            if i % n_fatias != fatia:
-                continue
-            total += loader.carregar(con, bloco, tabela, cfg)
+        # Um Carregador para todo o arquivo: o statement preparado é
+        # reaproveitado entre os blocos em vez de refeito a cada um.
+        with loader.Carregador(con, cfg) as carregador:
+            for i, bloco in enumerate(leitura.blocos_csv(Path(arquivo), colunas)):
+                # Este worker fica só com um bloco a cada n_fatias. Ler os
+                # demais custa a descompressão, ruído perto do tempo de carga.
+                if i % n_fatias != fatia:
+                    continue
+                total += carregador.carregar(bloco, tabela)
 
     return tabela, arquivo, fatia, total, time.time() - inicio
 

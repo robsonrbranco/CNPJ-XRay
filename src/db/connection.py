@@ -26,8 +26,8 @@ from firebird.driver import (
     DbWriteMode,
     connect,
     connect_server,
-    create_database,
     driver_config,
+    get_api,
 )
 
 from .config import FirebirdConfig, load_config
@@ -102,11 +102,27 @@ def database_exists(cfg: FirebirdConfig | None = None) -> bool:
         return False
 
 
+def create_database_sql(cfg: FirebirdConfig) -> str:
+    """Monta o CREATE DATABASE, com charset E collation no nível do banco."""
+    senha = cfg.password.replace("'", "''")
+    return (
+        f"CREATE DATABASE '{cfg.dsn}'\n"
+        f"  USER '{cfg.user}' PASSWORD '{senha}'\n"
+        f"  PAGE_SIZE {cfg.page_size}\n"
+        f"  DEFAULT CHARACTER SET {cfg.charset} COLLATION {cfg.collation}"
+    )
+
+
 def create_if_not_exists(cfg: FirebirdConfig | None = None) -> bool:
     """Cria o banco se ainda não existir. Devolve True se criou agora.
 
-    Já nasce com page_size de 16 KB, o cache configurado e Force Write OFF —
-    o banco recém-criado existe para receber a carga.
+    Executa o DDL literal em vez de usar o `create_database()` do driver: o
+    helper aceita `db_charset`, mas não expõe a COLLATION padrão do banco, e
+    ela é definível apenas na criação. Sem ela, `ORDER BY razao_social` joga
+    todo nome iniciado por acento para depois do Z.
+
+    O page_size também só pode ser definido aqui — mudar depois exige gbak.
+    Force Write e cache ficam para modo_carga(), que roda logo em seguida.
     """
     cfg = cfg or load_config()
 
@@ -114,13 +130,16 @@ def create_if_not_exists(cfg: FirebirdConfig | None = None) -> bool:
         logger.info("Banco já existe: %s", cfg.database)
         return False
 
-    nome = registrar(cfg, forced_writes=False)
+    registrar(cfg, forced_writes=False)
+    sql = create_database_sql(cfg)
     logger.info(
-        "Criando banco %s (page_size=%d, charset=%s, cache=%s páginas, forced_writes=OFF)",
-        cfg.database, cfg.page_size, cfg.charset, f"{cfg.cache_pages:,}" or "padrão",
+        "Criando banco %s (page_size=%d, charset=%s, collation=%s)",
+        cfg.database, cfg.page_size, cfg.charset, cfg.collation,
     )
-    con = create_database(nome)
-    con.close()
+
+    api = get_api()
+    att = api.util.execute_create_database(sql, 3)  # dialeto 3
+    att.detach()
     return True
 
 

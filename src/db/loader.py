@@ -190,64 +190,112 @@ def execute_block_sql(tabela: str, n_linhas: int) -> str:
     )
 
 
+class Carregador:
+    """Carrega blocos numa conexão, reaproveitando os statements preparados.
+
+    Existe por causa do custo de preparar: no perfil, preparar o EXECUTE BLOCK
+    levava 1,30s — 3,9% do tempo de um bloco de 60 mil linhas — e era refeito a
+    cada bloco. Como um worker processa dezenas de blocos da mesma tabela, o
+    statement é preparado uma vez por tabela e reaproveitado.
+
+    Isso também é o que torna barato usar blocos menores: sem o cache, reduzir
+    o bloco multiplicaria o custo de preparação. Com ele, o tamanho do bloco
+    passa a ser só uma escolha de quanta memória o worker ocupa.
+
+    Os statements são liberados no fecha(); a conexão também os libera ao
+    fechar, mas depender disso deixaria o `free()` para o coletor de lixo.
+    """
+
+    def __init__(self, con, cfg: FirebirdConfig | None = None):
+        self._con = con
+        self._cfg = cfg or load_config()
+        self._cur = con.cursor()
+        # (tabela) -> (statement de bloco cheio, statement de uma linha)
+        self._stmts: dict[str, tuple] = {}
+        self._desde_commit = 0
+
+    def _preparar(self, tabela: str) -> tuple:
+        if tabela not in self._stmts:
+            self._stmts[tabela] = (
+                self._cur.prepare(execute_block_sql(tabela, INSERTS_POR_BLOCO)),
+                # Statement separado para a sobra: um EXECUTE BLOCK tem número
+                # fixo de INSERTs, então o resto que não fecha um bloco vai
+                # linha a linha.
+                self._cur.prepare(execute_block_sql(tabela, 1)),
+            )
+        return self._stmts[tabela]
+
+    def carregar(self, df: pl.DataFrame, tabela: str) -> int:
+        """Insere o DataFrame na tabela. Devolve o número de linhas gravadas."""
+        total = df.height
+        if total == 0:
+            return 0
+
+        report = TruncationReport()
+        df = normalizar(df, tabela, report)
+        bloco_stmt, linha_stmt = self._preparar(tabela)
+
+        gravadas = 0
+        inicio = time.time()
+        lote: list = []
+
+        for linha in _linhas(df, tabela):
+            lote.append(linha)
+            if len(lote) == INSERTS_POR_BLOCO:
+                self._cur.execute(bloco_stmt, [v for t in lote for v in t])
+                gravadas += INSERTS_POR_BLOCO
+                self._desde_commit += INSERTS_POR_BLOCO
+                lote.clear()
+
+                if self._desde_commit >= self._cfg.commit_every:
+                    self._con.commit()
+                    self._desde_commit = 0
+
+                _progresso(tabela, gravadas, total, inicio)
+
+        for linha in lote:
+            self._cur.execute(linha_stmt, list(linha))
+            gravadas += 1
+            self._desde_commit += 1
+
+        _progresso(tabela, gravadas, total, inicio, fim=True)
+        report.log(tabela)
+        return gravadas
+
+    def fechar(self) -> None:
+        """Commita o que restou e libera os statements.
+
+        O commit é condicional: um worker cuja fatia não pegou nenhum bloco
+        nunca abriu transação, e commitar sem transação ativa levanta
+        AttributeError no driver.
+        """
+        if self._con.main_transaction.is_active():
+            self._con.commit()
+        for stmts in self._stmts.values():
+            for st in stmts:
+                st.free()
+        self._stmts.clear()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.fechar()
+
+
 def carregar(
     con,
     df: pl.DataFrame,
     tabela: str,
     cfg: FirebirdConfig | None = None,
 ) -> int:
-    """Insere o DataFrame na tabela. Devolve o número de linhas gravadas.
+    """Carrega um DataFrame avulso, preparando e liberando o statement.
 
-    A conexão é reaproveitada entre chamadas (o ETL carrega um arquivo por vez)
-    e o commit acontece a cada `cfg.commit_every` linhas.
+    Conveniência para carga pequena e para teste. Quem carrega muitos blocos
+    deve usar `Carregador`, que reaproveita a preparação.
     """
-    cfg = cfg or load_config()
-    total = df.height
-    if total == 0:
-        return 0
-
-    report = TruncationReport()
-    df = normalizar(df, tabela, report)
-
-    por_bloco = INSERTS_POR_BLOCO
-    cur = con.cursor()
-    bloco_stmt = cur.prepare(execute_block_sql(tabela, por_bloco))
-    # Statement separado para a sobra: um EXECUTE BLOCK tem número fixo de
-    # INSERTs, então o resto que não fecha um bloco vai linha a linha.
-    linha_stmt = cur.prepare(execute_block_sql(tabela, 1))
-
-    gravadas = 0
-    desde_commit = 0
-    inicio = time.time()
-    lote: list = []
-
-    try:
-        for linha in _linhas(df, tabela):
-            lote.append(linha)
-            if len(lote) == por_bloco:
-                cur.execute(bloco_stmt, [v for t in lote for v in t])
-                gravadas += por_bloco
-                desde_commit += por_bloco
-                lote.clear()
-
-                if desde_commit >= cfg.commit_every:
-                    con.commit()
-                    desde_commit = 0
-
-                _progresso(tabela, gravadas, total, inicio)
-
-        for linha in lote:
-            cur.execute(linha_stmt, list(linha))
-            gravadas += 1
-
-        con.commit()
-    finally:
-        bloco_stmt.free()
-        linha_stmt.free()
-
-    _progresso(tabela, gravadas, total, inicio, fim=True)
-    report.log(tabela)
-    return gravadas
+    with Carregador(con, cfg) as c:
+        return c.carregar(df, tabela)
 
 
 # Intervalo mínimo entre atualizações de progresso, em segundos.

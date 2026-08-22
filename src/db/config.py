@@ -66,7 +66,8 @@ class FirebirdConfig:
     database: str = ""
     user: str = "SYSDBA"
     password: str = ""
-    charset: str = "UTF8"
+    charset: str = "WIN1252"
+    collation: str = "WIN_PTBR"
     page_size: int = DEFAULT_PAGE_SIZE
     # Tamanho do cache de páginas do banco, em MB. 0 = deixa o padrão do servidor.
     cache_mb: int = 0
@@ -162,7 +163,8 @@ def load_config() -> FirebirdConfig:
         database=database,
         user=_env("DB_USER", "SYSDBA"),
         password=_env("DB_PASSWORD", ""),
-        charset=_env("DB_CHARSET", "UTF8"),
+        charset=_env("DB_CHARSET", "WIN1252"),
+        collation=_env("DB_COLLATION", "WIN_PTBR"),
         page_size=_int_env("FB_PAGE_SIZE", DEFAULT_PAGE_SIZE),
         cache_mb=cache_mb,
         batch_size=_int_env("FB_BATCH_SIZE", DEFAULT_BATCH_SIZE),

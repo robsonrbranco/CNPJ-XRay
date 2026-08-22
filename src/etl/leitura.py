@@ -17,6 +17,7 @@ extração: os ~7 GB compactados deixam de virar ~40 GB de CSV em disco.
 
 import io
 import logging
+import os
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -25,9 +26,14 @@ import polars as pl
 
 logger = logging.getLogger(__name__)
 
-# Bytes de CSV por bloco. Define o pico de memória da leitura: um bloco vira um
-# DataFrame, e o carregador consome dele em lotes menores.
-BYTES_POR_BLOCO = 128 * 1024 * 1024
+# Bytes de CSV por bloco. Define o pico de memória de cada worker: um bloco
+# vira um DataFrame, e o carregador consome dele em lotes de 256 linhas.
+#
+# Com N workers em paralelo o consumo é N vezes isso, e é a memória — não a
+# CPU — que limita quantos workers cabem. Blocos menores só ficaram baratos
+# depois que o Carregador passou a reaproveitar o statement preparado: antes,
+# reduzir o bloco multiplicava o custo de preparação (3,9% do tempo por bloco).
+BYTES_POR_BLOCO = int(os.getenv("ETL_BYTES_POR_BLOCO", 32 * 1024 * 1024))
 
 
 def _abrir(origem: Path):
