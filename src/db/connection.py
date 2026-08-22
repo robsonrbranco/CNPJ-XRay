@@ -22,6 +22,7 @@ from contextlib import contextmanager
 from firebird.driver import (
     DatabaseConfig,
     DatabaseError,
+    DbAccessMode,
     DbWriteMode,
     connect,
     connect_server,
@@ -158,6 +159,37 @@ def modo_producao(cfg: FirebirdConfig | None = None) -> None:
     """Devolve o banco ao modo seguro depois da carga."""
     cfg = cfg or load_config()
     _set_write_mode(cfg, DbWriteMode.SYNC, "SYNC (produção)")
+
+
+def _set_access_mode(cfg: FirebirdConfig, mode: DbAccessMode, rotulo: str,
+                     database: str | None = None) -> None:
+    alvo = database or cfg.database
+    with conectar_servidor(cfg) as svc:
+        svc.database.set_access_mode(database=alvo, mode=mode)
+    logger.info("Modo de acesso de %s = %s", alvo, rotulo)
+
+
+def modo_somente_leitura(cfg: FirebirdConfig | None = None, database: str | None = None) -> None:
+    """Marca o banco como somente leitura no próprio header.
+
+    A base em produção é base de consulta: ninguém altera dado nela, porque a
+    atualização mensal substitui o arquivo inteiro. Deixar isso apenas como
+    combinado operacional é frágil — um UPDATE acidental de um cliente
+    corromperia a base até a próxima carga. Em read-only o engine recusa
+    qualquer escrita, e como bônus para de manter versionamento de registro e
+    varredura de páginas sujas numa base que nunca muda.
+
+    Precisa ser desfeito (modo_leitura_escrita) para carregar de novo — mas o
+    ETL nunca recarrega por cima: constrói outro arquivo.
+    """
+    cfg = cfg or load_config()
+    _set_access_mode(cfg, DbAccessMode.READ_ONLY, "somente leitura", database)
+
+
+def modo_leitura_escrita(cfg: FirebirdConfig | None = None, database: str | None = None) -> None:
+    """Devolve o banco ao modo gravável."""
+    cfg = cfg or load_config()
+    _set_access_mode(cfg, DbAccessMode.READ_WRITE, "leitura e escrita", database)
 
 
 def estatisticas(cfg: FirebirdConfig | None = None) -> None:

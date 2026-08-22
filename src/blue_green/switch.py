@@ -1,98 +1,142 @@
-import asyncpg
+"""Troca da base de produção pela base recém-construída.
+
+O ETL nunca altera a base em produção: ele constrói uma base nova do zero em
+`<nome>_staging.fdb` e, só no fim, esta troca coloca a nova no lugar. Em
+Firebird isso é renomeação de arquivo — não existe ALTER DATABASE RENAME, e
+não é preciso derrubar um banco que continua existindo.
+
+    producao.fdb          -> producao_old.fdb
+    producao_staging.fdb  -> producao.fdb
+    producao_old.fdb      -> descartado
+
+A ordem importa. O `_old` existe para que, se a segunda renomeação falhar, a
+base anterior ainda esteja em disco e possa ser devolvida — e é justamente o
+que `_restaurar()` faz. Só depois de a nova estar no lugar e online é que o
+`_old` é descartado.
+
+Quem renomeia é este processo, não o servidor: os arquivos precisam estar
+visíveis para ele. Quando o Firebird roda em container ou noutra máquina,
+`FB_LOCAL_DATA_DIR` faz a ponte entre o caminho do servidor e o do cliente.
+"""
+
+import logging
 from dataclasses import dataclass
+from pathlib import Path
 
+from src.blue_green import manutencao
 from src.blue_green.state import StateManager
-from src.blue_green.validator import BlueGreenValidator
+from src.blue_green.validator import ValidationResult, validar
+from src.db.config import FirebirdConfig, load_config
 
-_ACTIVE_DB = "receita_federal"
-_STAGING_DB = "receita_federal_staging"
-_OLD_DB = "receita_federal_old"
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class SwitchResult:
     success: bool
     message: str
-    active_db: str = _ACTIVE_DB
     source_month: str | None = None
+    validacao: ValidationResult | None = None
 
 
 class BlueGreenSwitcher:
-    def __init__(self, db_config: dict, state_manager: StateManager):
-        self._config = db_config
-        self._state = state_manager
+    def __init__(self, cfg: FirebirdConfig | None = None, state: StateManager | None = None):
+        self._cfg = cfg or load_config()
+        self._state = state or StateManager()
 
-    async def _admin_conn(self):
-        return await asyncpg.connect(**self._config, database="postgres", timeout=30)
+    # -- caminhos, do ponto de vista de quem renomeia --------------------
 
-    async def _db_exists(self, conn, name: str) -> bool:
-        return bool(
-            await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", name)
-        )
+    def _local(self, database: str) -> Path:
+        return self._cfg.caminho_local(database)
 
-    async def _terminate_connections(self, conn, db_name: str) -> None:
-        await conn.execute(
-            """
-            SELECT pg_terminate_backend(pid)
-            FROM pg_stat_activity
-            WHERE datname = $1 AND pid <> pg_backend_pid()
-            """,
-            db_name,
-        )
+    def switch(self, force: bool = False) -> SwitchResult:
+        cfg = self._cfg
+        ativo, staging, old = cfg.database, cfg.staging_database, cfg.old_database
 
-    async def _drop_db(self, conn, db_name: str) -> None:
-        await self._terminate_connections(conn, db_name)
-        await conn.execute(f'DROP DATABASE IF EXISTS "{db_name}"')
-
-    async def switch(self, force: bool = False) -> SwitchResult:
+        validacao = None
         if not force:
-            validator = BlueGreenValidator(self._config)
-            result = await validator.validate(_STAGING_DB)
-            if not result.is_valid:
-                return SwitchResult(success=False, message=result.summary)
+            validacao = validar(cfg, staging)
+            if not validacao.is_valid:
+                return SwitchResult(False, validacao.summary, validacao=validacao)
 
-        admin = await self._admin_conn()
-        try:
-            if not await self._db_exists(admin, _STAGING_DB):
-                return SwitchResult(
-                    success=False,
-                    message=f"Staging '{_STAGING_DB}' não encontrada — execute o ETL primeiro",
-                )
+        f_ativo, f_staging, f_old = self._local(ativo), self._local(staging), self._local(old)
 
-            # Invariante: nunca mais de 2 bancos — dropa old se existir
-            if await self._db_exists(admin, _OLD_DB):
-                await self._drop_db(admin, _OLD_DB)
-
-            # Encerra conexões no banco ativo antes do rename
-            await self._terminate_connections(admin, _ACTIVE_DB)
-
-            await admin.execute(f'ALTER DATABASE "{_ACTIVE_DB}" RENAME TO "{_OLD_DB}"')
-            await admin.execute(f'ALTER DATABASE "{_STAGING_DB}" RENAME TO "{_ACTIVE_DB}"')
-
-            # Atualiza estado antes do drop do old para não perder metadados se drop falhar
-            self._state.promote_staging()
-            staging_info = (self._state.get_active() or {})
-
-            # Drop imediato do old — mantém invariante dos 2 bancos
-            await self._drop_db(admin, _OLD_DB)
-
+        if not f_staging.exists():
             return SwitchResult(
-                success=True,
-                message=f"Switch concluído — '{_ACTIVE_DB}' agora contém os dados novos",
-                source_month=staging_info.get("source_month"),
+                False,
+                f"Base nova não encontrada em {f_staging} — rode o ETL antes da troca",
             )
-        except Exception as e:
-            return SwitchResult(success=False, message=f"Erro durante o switch: {e}")
-        finally:
-            await admin.close()
 
-    async def cleanup_old(self) -> None:
-        admin = await self._admin_conn()
+        # Sobra de uma troca anterior interrompida: descartar antes, senão o
+        # rename do ativo esbarra num arquivo já existente.
+        if f_old.exists():
+            logger.warning("Descartando %s remanescente de troca anterior", f_old)
+            manutencao.desligar(cfg, old)
+            f_old.unlink()
+
+        tinha_ativo = f_ativo.exists()
+
         try:
-            if await self._db_exists(admin, _OLD_DB):
-                await self._drop_db(admin, _OLD_DB)
-                print(f"[blue-green] '{_OLD_DB}' dropado com sucesso")
-            else:
-                print(f"[blue-green] '{_OLD_DB}' não existe — nada a fazer")
-        finally:
-            await admin.close()
+            manutencao.desligar(cfg, staging)
+
+            if tinha_ativo:
+                manutencao.desligar(cfg, ativo)
+                f_ativo.rename(f_old)
+                logger.info("Base anterior preservada em %s", f_old)
+
+            f_staging.rename(f_ativo)
+            manutencao.religar(cfg, ativo)
+
+        except Exception as e:
+            restaurado = self._restaurar(f_ativo, f_old, f_staging, tinha_ativo)
+            return SwitchResult(
+                False,
+                f"Erro durante a troca: {e}. {restaurado}",
+                validacao=validacao,
+            )
+
+        # Estado antes do descarte: se apagar o _old falhar, os metadados da
+        # troca já estão gravados e a produção já está correta.
+        self._state.promote_staging()
+        info = self._state.get_active() or {}
+
+        if f_old.exists():
+            try:
+                f_old.unlink()
+                logger.info("Base anterior descartada")
+            except OSError as e:
+                logger.warning("Base anterior não pôde ser removida (%s): %s", f_old, e)
+
+        return SwitchResult(
+            True,
+            f"Troca concluída — {f_ativo.name} agora tem os dados novos",
+            source_month=info.get("source_month"),
+            validacao=validacao,
+        )
+
+    def _restaurar(self, f_ativo: Path, f_old: Path, f_staging: Path, tinha_ativo: bool) -> str:
+        """Tenta desfazer uma troca que falhou no meio."""
+        if not tinha_ativo:
+            return "Não havia base anterior para restaurar."
+        if f_ativo.exists():
+            return "A base de produção está no lugar."
+        if f_old.exists():
+            try:
+                f_old.rename(f_ativo)
+                manutencao.religar(self._cfg, self._cfg.database)
+                return "A base anterior foi restaurada."
+            except OSError as e:
+                return (
+                    f"ATENÇÃO: a base anterior está em {f_old} e não pôde ser "
+                    f"restaurada ({e}) — renomeie manualmente para {f_ativo}."
+                )
+        return f"ATENÇÃO: nenhuma base em {f_ativo}; verifique {f_staging} e {f_old}."
+
+    def descartar_antiga(self) -> str:
+        """Remove a base `_old` deixada por uma troca interrompida."""
+        f_old = self._local(self._cfg.old_database)
+        if not f_old.exists():
+            return f"{f_old.name} não existe — nada a fazer"
+        manutencao.desligar(self._cfg, self._cfg.old_database)
+        f_old.unlink()
+        return f"{f_old.name} removida"

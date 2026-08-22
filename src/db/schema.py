@@ -31,6 +31,23 @@ para cima com folga, porque VARCHAR curto demais trunca dado em silêncio.
 Atenção ao parsear os CSV da RFB: o campo `complemento` contém ";" dentro de
 valor entre aspas (ex.: "BLOCO: 01; APT: 144;"). Split ingênuo por ";" corrompe
 ~5% das linhas de estabelecimento — o parser precisa honrar aspas.
+
+Ausência deliberada de travas
+-----------------------------
+Nenhuma tabela declara PRIMARY KEY, NOT NULL ou FOREIGN KEY. Não é esquecimento.
+
+Dado público brasileiro chega com inconsistência: código de domínio repetido,
+registro de tabela secundária sem o pai correspondente, campo obrigatório
+vazio. Uma trava declarada aqui transformaria cada uma dessas ocorrências numa
+exceção no meio de uma carga de 220 milhões de linhas que leva horas — e o ETL
+morreria por causa de um dado que a Receita publicou assim.
+
+A base carrega o que a fonte mandou. Os índices vêm depois da carga e existem
+para performance de consulta, não para integridade. A conferência de qualidade
+é feita à parte, sobre a base já carregada, e vira relatório — não aborto.
+
+Quem consome a base precisa saber disso: `JOIN` com tabela de domínio deve ser
+`LEFT JOIN`, porque código órfão existe.
 """
 
 from dataclasses import dataclass
@@ -50,17 +67,13 @@ class Column:
     fb_type: str
     # Comprimento máximo em caracteres, para colunas TEXT. None nos demais.
     max_len: int | None = None
-    not_null: bool = False
-    primary_key: bool = False
 
     @property
     def ddl(self) -> str:
-        ddl = f"{self.name} {self.fb_type}"
-        if self.primary_key:
-            ddl += " NOT NULL PRIMARY KEY"
-        elif self.not_null:
-            ddl += " NOT NULL"
-        return ddl
+        # Sem PRIMARY KEY, sem NOT NULL, sem FK: a base de carga não impõe
+        # nenhuma restrição de integridade. Ver a nota sobre travas no topo
+        # do módulo.
+        return f"{self.name} {self.fb_type}"
 
 
 def _text(name, size, **kw):
@@ -82,14 +95,14 @@ def _numeric(name, fb_type="NUMERIC(18,2)"):
 def _dominio():
     """Tabela de domínio código/descrição (cnae, motivo, municipio, ...)."""
     return [
-        _int("codigo", primary_key=True),
+        _int("codigo"),
         _text("descricao", 200),
     ]
 
 
 TABLES: dict[str, list[Column]] = {
     "empresa": [
-        _text("cnpj_basico", 8, not_null=True),
+        _text("cnpj_basico", 8),
         _text("razao_social", 200),
         _int("natureza_juridica"),
         _int("qualificacao_responsavel", "SMALLINT"),
@@ -98,9 +111,9 @@ TABLES: dict[str, list[Column]] = {
         _text("ente_federativo_responsavel", 60),
     ],
     "estabelecimento": [
-        _text("cnpj_basico", 8, not_null=True),
-        _text("cnpj_ordem", 4, not_null=True),
-        _text("cnpj_dv", 2, not_null=True),
+        _text("cnpj_basico", 8),
+        _text("cnpj_ordem", 4),
+        _text("cnpj_dv", 2),
         _int("identificador_matriz_filial", "SMALLINT"),
         _text("nome_fantasia", 80),
         _int("situacao_cadastral", "SMALLINT"),
@@ -131,7 +144,7 @@ TABLES: dict[str, list[Column]] = {
         _date("data_situacao_especial"),
     ],
     "socios": [
-        _text("cnpj_basico", 8, not_null=True),
+        _text("cnpj_basico", 8),
         _int("identificador_socio", "SMALLINT"),
         _text("nome_socio", 200),
         _text("cnpj_cpf_socio", 14),
@@ -144,7 +157,7 @@ TABLES: dict[str, list[Column]] = {
         _int("faixa_etaria", "SMALLINT"),
     ],
     "simples": [
-        _text("cnpj_basico", 8, not_null=True),
+        _text("cnpj_basico", 8),
         _text("opcao_pelo_simples", 1),
         _date("data_opcao_simples"),
         _date("data_exclusao_simples"),
@@ -188,30 +201,13 @@ INDEXES: dict[str, tuple[str, ...]] = {
     "simples_cnpj": ("simples", "cnpj_basico"),
     "estabelecimento_situacao": ("estabelecimento", "situacao_cadastral"),
     "estabelecimento_municipio": ("estabelecimento", "municipio"),
-}
-
-
-# ---------------------------------------------------------------------------
-# Chaves para UPDATE OR INSERT (a cláusula MATCHING).
-#
-# UPDATE OR INSERT tem a sintaxe do INSERT mas não levanta exceção quando a
-# chave já existe — é a mesma instrução para a carga inicial e para a
-# atualização mensal da base, o que evita ter dois caminhos de código.
-#
-# Só vale a pena com índice ÚNICO sobre a chave: sem ele o Firebird não tem
-# como decidir o que atualizar e a semântica com duplicata fica indefinida.
-# Por isso o modo upsert exige criar os índices ANTES da carga, ao contrário
-# da carga inicial — que é sempre mais rápida com a tabela sem índice nenhum.
-#
-# `socios` não tem chave natural: o mesmo CNPJ pode ter vários sócios e a
-# própria RFB mascara o CPF, então não há como identificar a linha. Atualizar
-# sócios é recarga completa da tabela, não upsert.
-# ---------------------------------------------------------------------------
-MATCHING: dict[str, tuple[str, ...]] = {
-    "empresa": ("cnpj_basico",),
-    "estabelecimento": ("cnpj_basico", "cnpj_ordem", "cnpj_dv"),
-    "simples": ("cnpj_basico",),
-    **{t: ("codigo",) for t in DOMAIN_TABLES},
+    # Domínio por código. Enquanto as tabelas de domínio tinham PRIMARY KEY,
+    # o índice vinha de graça junto com ela; ao remover as travas da carga o
+    # índice foi junto, e sem ele todo JOIN de domínio vira varredura completa
+    # da tabela de domínio para CADA linha do fato. Medido: contar órfãos de
+    # `estabelecimento.municipio` levou 307s sem índice contra 1s com — e é o
+    # mesmo custo que qualquer consulta de usuário pagaria.
+    **{f"{t}_codigo": (t, "codigo") for t in DOMAIN_TABLES},
 }
 
 

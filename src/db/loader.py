@@ -53,18 +53,14 @@ from .config import FirebirdConfig, load_config
 
 logger = logging.getLogger(__name__)
 
-# Instruções por EXECUTE BLOCK.
+# INSERTs por EXECUTE BLOCK.
 #
 # O teto não é escolha de tuning: é o limite de CONTEXTOS do engine, que
 # aparece como "Too many Contexts of Relation/Procedure/Views. Maximum allowed
-# is 256". Medido por bisseção contra o Firebird 3.0.14:
-#
-#     INSERT ............. cabe 256 por bloco  (1 contexto cada)
-#     UPDATE OR INSERT ...  cabe  85 por bloco  (3 contextos cada, 85*3 = 255)
-#
-# Mexer nesses números sem medir de novo quebra a preparação do statement.
+# is 256". Um INSERT consome 1 contexto, então cabem 256 por bloco — medido
+# por bisseção contra o Firebird 3.0.14. Mexer nesse número sem medir de novo
+# quebra a preparação do statement.
 INSERTS_POR_BLOCO = 256
-UPSERTS_POR_BLOCO = 85
 
 
 class TruncationReport:
@@ -165,31 +161,15 @@ def _linhas(df: pl.DataFrame, tabela: str):
         yield tuple(valores)
 
 
-def execute_block_sql(tabela: str, n_linhas: int, upsert: bool = False) -> str:
-    """Monta um EXECUTE BLOCK que grava `n_linhas` de uma vez.
+def execute_block_sql(tabela: str, n_linhas: int) -> str:
+    """Monta um EXECUTE BLOCK que insere `n_linhas` de uma vez.
 
     Os parâmetros são declarados com `TYPE OF COLUMN`, então o próprio Firebird
     resolve o tipo de cada um a partir da tabela — não há tipo duplicado aqui e
     no schema.
-
-    Com `upsert=True` usa UPDATE OR INSERT, que tem a sintaxe do INSERT mas não
-    levanta exceção quando a chave já existe: a mesma instrução serve para a
-    carga inicial e para a atualização mensal da base. Exige chave declarada em
-    schema.MATCHING (ou PK na tabela).
     """
     cols = schema.columns(tabela)
     nomes = [c.name for c in cols]
-    verbo = "UPDATE OR INSERT INTO" if upsert else "INSERT INTO"
-
-    matching = ""
-    if upsert:
-        chave = schema.MATCHING.get(tabela)
-        if not chave:
-            raise ValueError(
-                f"tabela '{tabela}' não tem chave para UPDATE OR INSERT; "
-                f"declare-a em schema.MATCHING"
-            )
-        matching = f" MATCHING ({', '.join(chave)})"
 
     params: list[str] = []
     corpo: list[str] = []
@@ -199,9 +179,7 @@ def execute_block_sql(tabela: str, n_linhas: int, upsert: bool = False) -> str:
             f"{p} TYPE OF COLUMN {tabela}.{c.name} = ?" for p, c in zip(ps, cols)
         ]
         valores = ", ".join(f":{p}" for p in ps)
-        corpo.append(
-            f"{verbo} {tabela} ({', '.join(nomes)}) VALUES ({valores}){matching};"
-        )
+        corpo.append(f"INSERT INTO {tabela} ({', '.join(nomes)}) VALUES ({valores});")
 
     return (
         "EXECUTE BLOCK (\n  "
@@ -217,7 +195,6 @@ def carregar(
     df: pl.DataFrame,
     tabela: str,
     cfg: FirebirdConfig | None = None,
-    upsert: bool = False,
 ) -> int:
     """Insere o DataFrame na tabela. Devolve o número de linhas gravadas.
 
@@ -232,12 +209,12 @@ def carregar(
     report = TruncationReport()
     df = normalizar(df, tabela, report)
 
-    por_bloco = UPSERTS_POR_BLOCO if upsert else INSERTS_POR_BLOCO
+    por_bloco = INSERTS_POR_BLOCO
     cur = con.cursor()
-    bloco_stmt = cur.prepare(execute_block_sql(tabela, por_bloco, upsert))
+    bloco_stmt = cur.prepare(execute_block_sql(tabela, por_bloco))
     # Statement separado para a sobra: um EXECUTE BLOCK tem número fixo de
     # INSERTs, então o resto que não fecha um bloco vai linha a linha.
-    linha_stmt = cur.prepare(execute_block_sql(tabela, 1, upsert))
+    linha_stmt = cur.prepare(execute_block_sql(tabela, 1))
 
     gravadas = 0
     desde_commit = 0

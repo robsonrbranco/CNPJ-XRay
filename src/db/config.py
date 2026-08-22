@@ -2,7 +2,7 @@
 
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # Firebird 3.0 aceita no máximo 16 KB de página (32 KB só a partir do 4.0).
 # Página grande reduz profundidade de índice e melhora leitura sequencial, que
@@ -74,11 +74,48 @@ class FirebirdConfig:
     commit_every: int = DEFAULT_COMMIT_EVERY
     # Biblioteca cliente (fbclient.dll / libfbclient.so). Vazio = busca no PATH.
     client_library: str = ""
+    # Diretório onde ESTE processo enxerga os .fdb, quando difere do caminho
+    # que o servidor usa (Firebird em container ou noutra máquina). Só importa
+    # para a troca blue-green, que renomeia arquivos. Ver caminho_local().
+    local_data_dir: str = ""
 
     @property
     def dsn(self) -> str:
         """DSN no formato aceito pelo firebird-driver."""
         return f"inet://{self.host}:{self.port}/{self.database}"
+
+    def dsn_para(self, caminho: str) -> str:
+        """DSN de outro arquivo de banco no mesmo servidor."""
+        return f"inet://{self.host}:{self.port}/{caminho}"
+
+    def _irmao(self, sufixo: str) -> str:
+        """Caminho de um .fdb irmão do ativo, com sufixo no nome."""
+        p = PurePosixPath(self.database)
+        return str(p.with_name(f"{p.stem}{sufixo}{p.suffix}"))
+
+    @property
+    def staging_database(self) -> str:
+        """Banco onde o ETL constrói a base nova, do zero."""
+        return self._irmao("_staging")
+
+    @property
+    def old_database(self) -> str:
+        """Banco anterior, mantido só entre o rename e o descarte."""
+        return self._irmao("_old")
+
+    def caminho_local(self, caminho_servidor: str) -> Path:
+        """Traduz um caminho do servidor para onde ESTE processo o enxerga.
+
+        A troca blue-green renomeia arquivos, e quem renomeia é o processo
+        Python — não o servidor. Quando o Firebird roda em container ou em
+        outra máquina, o caminho que o servidor usa não é o mesmo que o
+        cliente vê; `FB_LOCAL_DATA_DIR` faz essa ponte. Vazio significa que
+        cliente e servidor enxergam o mesmo caminho.
+        """
+        nome = PurePosixPath(caminho_servidor).name
+        if self.local_data_dir:
+            return Path(self.local_data_dir) / nome
+        return Path(caminho_servidor)
 
     @property
     def cache_pages(self) -> int:
@@ -131,4 +168,5 @@ def load_config() -> FirebirdConfig:
         batch_size=_int_env("FB_BATCH_SIZE", DEFAULT_BATCH_SIZE),
         commit_every=_int_env("FB_COMMIT_EVERY", DEFAULT_COMMIT_EVERY),
         client_library=_env("FB_CLIENT_LIBRARY", ""),
+        local_data_dir=_env("FB_LOCAL_DATA_DIR", ""),
     )
