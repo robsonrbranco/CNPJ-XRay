@@ -35,6 +35,38 @@ logger = logging.getLogger(__name__)
 # reduzir o bloco multiplicava o custo de preparação (3,9% do tempo por bloco).
 BYTES_POR_BLOCO = int(os.getenv("ETL_BYTES_POR_BLOCO", 32 * 1024 * 1024))
 
+# Encoding dos arquivos da Receita.
+#
+# cp1252 e não latin-1, apesar de os dois serem idênticos em quase toda a
+# tabela. Eles divergem na faixa 0x80-0x9F: latin-1 mapeia para caracteres de
+# controle C1, cp1252 mapeia para símbolos imprimíveis (aspas curvas, travessão,
+# reticências). Como o banco é WIN1252, ler como latin-1 e gravar como WIN1252
+# quebra — um caractere de controle C1 não existe em WIN1252 — enquanto ler
+# como cp1252 faz o byte voltar idêntico ao que veio do arquivo.
+ENCODING = "cp1252"
+
+# Bytes sem definição em cp1252, e o que colocar no lugar.
+#
+# São cinco: 0x81, 0x8D, 0x8F, 0x90 e 0x9D. Não representam caractere nenhum,
+# nem em cp1252 nem em WIN1252, então não há conversão possível — só substituir
+# ou abortar a carga.
+#
+# Uma varredura completa das 37 partes da competência 2026-08 (26,5 GB
+# descompactados) achou exatamente 5 ocorrências, todas de 0x8F, em
+# Estabelecimentos 0, 1 e 4. É lixo na origem. Mas cinco bytes bastam para
+# derrubar uma carga de três horas no fim dela, então a limpeza é obrigatória.
+#
+# Feita em bytes e não em string: `bytes.translate` é uma passada em C sobre o
+# bloco inteiro. Inspecionar 220 milhões de strings em Python custaria mais que
+# a carga.
+SUBSTITUTO = ord("?")
+_INDEFINIDOS_CP1252 = (0x81, 0x8D, 0x8F, 0x90, 0x9D)
+_TABELA_LIMPEZA = bytes(
+    SUBSTITUTO if b in _INDEFINIDOS_CP1252 else b for b in range(256)
+)
+# Para contar quantos foram trocados: apaga tudo que não é indefinido.
+_SO_INDEFINIDOS = bytes(b for b in range(256) if b not in _INDEFINIDOS_CP1252)
+
 
 def _abrir(origem: Path):
     """Abre a origem como stream binário de CSV.
@@ -85,10 +117,20 @@ def blocos_csv(
     tipo aqui levaria a decisões diferentes bloco a bloco.
     """
     stream, zf = _abrir(Path(origem))
+    nome = Path(origem).name
     try:
         for bruto in _blocos_de_bytes(stream, bytes_por_bloco):
             if not bruto.strip():
                 continue
+
+            sujos = len(bruto.translate(None, delete=_SO_INDEFINIDOS))
+            if sujos:
+                logger.warning(
+                    "%s: %d byte(s) sem definição em %s trocado(s) por %r",
+                    nome, sujos, ENCODING, chr(SUBSTITUTO),
+                )
+                bruto = bruto.translate(_TABELA_LIMPEZA)
+
             try:
                 yield pl.read_csv(
                     io.BytesIO(bruto),
@@ -96,7 +138,7 @@ def blocos_csv(
                     has_header=False,
                     new_columns=colunas,
                     schema_overrides=[pl.Utf8] * len(colunas),
-                    encoding="latin-1",
+                    encoding=ENCODING,
                     # O campo `complemento` contém ";" dentro de valor entre
                     # aspas ("BLOCO: 01; APT: 144;"). Sem honrar aspas, ~5% das
                     # linhas de estabelecimento saem com o número errado de
