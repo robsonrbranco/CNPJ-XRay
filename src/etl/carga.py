@@ -6,10 +6,42 @@ iguais entre si — mudava a lista de colunas e quais converter — e essa
 repetição sumiu quando a conversão passou a ser derivada de db.schema por
 db.loader.normalizar. Sobrou uma função só, dirigida pelo schema.
 
-A carga é sequencial de propósito. Medido contra o Firebird 3.0.14, dividir o
-mesmo volume entre conexões concorrentes na mesma tabela derruba a taxa: 2
-conexões 0,75x, 4 conexões 0,34x, 8 conexões 0,31x. Uma conexão só é o
-caminho rápido em Firebird.
+A carga roda em PROCESSOS paralelos, e o motivo está no perfil.
+
+Perfilando a carga de um bloco de 60 mil linhas de `estabelecimento`:
+
+    normalizar (Polars) .............   0,04s    0,1%
+    montar tuplas ...................   0,09s    0,3%
+    cur.execute .....................  32,08s   95,4%
+
+E dentro do `cur.execute`, o banco quase não aparece: a chamada ao servidor
+(`interfaces.py:805`) leva 0,687s enquanto o `_pack_input` do driver leva
+11,78s. São ~2,1 milhões de chamadas a `_check`/`get_state` por bloco de 40 —
+cerca de 7 por parâmetro, cada uma fazendo `__contains__` de enum. O
+empacotamento de parâmetros em Python custa ~17x o trabalho do banco.
+
+Durante uma carga real: Python a 71% de um núcleo, serviço do Firebird a 0%,
+sete núcleos ociosos. O gargalo é o cliente, não o engine — então processos
+paralelos (que fogem do GIL) escalam. Medido, mesma tabela, arquivos
+diferentes:
+
+    1 processo ...  6.347 linhas/s   1,00x
+    2 processos .. 11.859 linhas/s   1,87x
+    4 processos .. 21.207 linhas/s   3,34x
+    6 processos .. 27.139 linhas/s   4,28x
+    8 processos .. 29.989 linhas/s   4,72x
+
+PROCESSOS, não threads: uma medição anterior com `threading.Thread` deu 0,31x
+com 8 threads e me levou a concluir, errado, que "paralelismo piora em
+Firebird". Aquilo era contenção de GIL entre threads que passam o tempo em
+Python — não do banco. Com processos separados o efeito some.
+
+O paralelismo é por BLOCO dentro do arquivo, não por arquivo: os arquivos da
+Receita são muito desiguais (Estabelecimentos0.zip tem 2,2 GB contra ~340 MB
+dos demais), e dividir por arquivo deixaria o pool inteiro esperando o maior.
+Cada worker abre o mesmo arquivo e processa um bloco a cada `n_fatias` — o
+custo é descomprimir o arquivo em duplicidade, mas ler e parsear é ~0,6% do
+tempo, então a redundância é ruído perto do balanceamento que ela compra.
 """
 
 import logging
@@ -168,9 +200,10 @@ def carregar_tudo(
     ao_concluir_arquivo=None,
     ao_concluir_tabela=None,
 ) -> dict[str, int]:
-    """Carrega todas as tabelas na ordem definida em ORDEM.
+    """Carrega todas as tabelas na ordem de ORDEM, numa conexão só.
 
-    `pular` são tabelas que um checkpoint indica já carregadas.
+    Caminho sequencial, mantido para carga pequena e para depuração — a carga
+    completa usa carregar_tudo_paralelo().
     """
     pular = pular or set()
     contagens: dict[str, int] = {}
@@ -185,4 +218,115 @@ def carregar_tudo(
         if ao_concluir_tabela:
             ao_concluir_tabela(tabela, contagens[tabela])
 
+    return contagens
+
+
+# ---------------------------------------------------------------------------
+# Carga paralela
+# ---------------------------------------------------------------------------
+
+def _worker(tarefa: tuple[str, str, int, int, str]) -> tuple[str, str, int, int, float]:
+    """Carrega uma fatia de um arquivo. Roda em processo próprio.
+
+    Cada processo abre a própria conexão: conexão do Firebird não atravessa
+    fronteira de processo, e é justamente ter uma por processo que faz o
+    paralelismo valer.
+
+    O restante da configuração vem do ambiente, que o filho herda do pai — mas
+    o CAMINHO DO BANCO viaja na tarefa, e não pode sair de `load_config()`.
+    `DB_NAME` no ambiente aponta para a produção; a carga acontece na base
+    nova. Ler do ambiente aqui faria todo worker escrever no banco errado.
+    """
+    tabela, arquivo, fatia, n_fatias, database = tarefa
+
+    # Import tardio: com 'spawn' (padrão no Windows) o filho reimporta o
+    # módulo, e importar o mundo no topo encareceria cada processo.
+    from src.db import connection, loader, schema
+    from src.db.config import FirebirdConfig, load_config
+
+    cfg = FirebirdConfig(**{**load_config().__dict__, "database": database})
+    colunas = schema.column_names(tabela)
+    inicio = time.time()
+    total = 0
+
+    with connection.conectar(cfg) as con:
+        for i, bloco in enumerate(leitura.blocos_csv(Path(arquivo), colunas)):
+            # Este worker fica só com um bloco a cada n_fatias. Ler os demais
+            # custa a descompressão, que é ruído perto do tempo de carga.
+            if i % n_fatias != fatia:
+                continue
+            total += loader.carregar(con, bloco, tabela, cfg)
+
+    return tabela, arquivo, fatia, total, time.time() - inicio
+
+
+def montar_tarefas(
+    por_tabela: dict[str, list[Path]],
+    n_fatias: int,
+    database: str,
+    pular: set[str] | None = None,
+) -> list[tuple[str, str, int, int, str]]:
+    """Monta a lista de (tabela, arquivo, fatia, n_fatias, database).
+
+    Na ordem de ORDEM, para que domínio e tabelas baratas terminem cedo e um
+    erro de ambiente apareça em segundos em vez de horas.
+    """
+    pular = pular or set()
+    tarefas: list[tuple[str, str, int, int, str]] = []
+    for tabela in ORDEM:
+        if tabela in pular:
+            continue
+        for arquivo in por_tabela.get(tabela, []):
+            for fatia in range(n_fatias):
+                tarefas.append((tabela, str(arquivo), fatia, n_fatias, database))
+    return tarefas
+
+
+def carregar_tudo_paralelo(
+    por_tabela: dict[str, list[Path]],
+    cfg: FirebirdConfig,
+    processos: int,
+    pular: set[str] | None = None,
+    ao_concluir_fatia=None,
+) -> dict[str, int]:
+    """Carrega todas as tabelas com `processos` workers em paralelo.
+
+    A conexão do pai NÃO é usada aqui: as tabelas já precisam existir antes
+    (manage.criar_tabelas), e os índices são criados depois, pelo pai.
+    """
+    import multiprocessing as mp
+
+    tarefas = montar_tarefas(por_tabela, processos, cfg.database, pular)
+    contagens: dict[str, int] = {}
+    inicio = time.time()
+
+    # Uma tabela só está pronta quando TODAS as suas fatias voltaram — as
+    # tarefas terminam fora de ordem, então o checkpoint não pode marcar a
+    # tabela na primeira que chega.
+    pendentes: dict[str, int] = {}
+    for tabela, _, _, _, _ in tarefas:
+        pendentes[tabela] = pendentes.get(tabela, 0) + 1
+
+    logger.info(
+        "Carga paralela: %d tarefas em %d processos", len(tarefas), processos
+    )
+
+    with mp.Pool(processos) as pool:
+        for tabela, arquivo, fatia, linhas, dt in pool.imap_unordered(_worker, tarefas):
+            contagens[tabela] = contagens.get(tabela, 0) + linhas
+            pendentes[tabela] -= 1
+            logger.info(
+                "%s %s [fatia %d/%d]: %s linhas em %.1fs (%s linhas/s)",
+                tabela, Path(arquivo).name, fatia + 1, processos,
+                f"{linhas:,}", dt, f"{linhas / max(dt, 1e-6):,.0f}",
+            )
+            if pendentes[tabela] == 0 and ao_concluir_fatia:
+                ao_concluir_fatia(tabela, contagens[tabela])
+
+    dt = max(time.time() - inicio, 1e-6)
+    total = sum(contagens.values())
+    logger.info(
+        "Carga concluída: %s linhas em %.1f min (%s linhas/s)",
+        f"{total:,}", dt / 60, f"{total / dt:,.0f}",
+    )
     return contagens

@@ -16,14 +16,20 @@ Ordem das fases, e o porquê de cada uma:
     1. base nova, do zero        arquivo anterior é descartado -- não há
                                  recarga parcial por cima de dado velho
     2. Force Write ASYNC         o engine para de forçar fsync por página
-    3. tabelas SEM índice        índice ativo durante INSERT em massa é o
-                                 maior custo de uma carga Firebird
-    4. carga sequencial          concorrência degrada em Firebird (medido)
-    5. índices                   agora, com as tabelas já povoadas
+    3. tabelas SEM trava         sem PK/NOT NULL/FK: dado público brasileiro
+                                 tem inconsistência, e uma trava mataria uma
+                                 carga de 220 milhões de linhas por causa de
+                                 um registro que a fonte publicou assim
+    4. carga em N processos      o gargalo é o driver empacotando parâmetros
+                                 em Python, não o engine -- ver src/etl/carga
+    5. índices                   agora, com as tabelas já povoadas, e só para
+                                 performance de consulta, nunca como trava
     6. SET STATISTICS            a seletividade gravada na criação do índice
                                  fica defasada depois de uma carga grande
     7. Force Write SYNC          devolve a durabilidade antes de virar produção
     8. validação                 nada é promovido sem estar completo
+    9. troca + read-only         produção é base de consulta: o engine passa a
+                                 recusar escrita
 """
 
 import argparse
@@ -101,7 +107,9 @@ def _descartar_base_anterior(cfg_staging: FirebirdConfig) -> None:
     arquivo.unlink()
 
 
-def construir(cfg: FirebirdConfig, origem: Path, continuar: bool) -> dict[str, int]:
+def construir(
+    cfg: FirebirdConfig, origem: Path, continuar: bool, processos: int
+) -> dict[str, int]:
     cfg_staging = _config_staging(cfg)
     arquivo = cfg_staging.caminho_local(cfg_staging.database)
 
@@ -147,18 +155,20 @@ def construir(cfg: FirebirdConfig, origem: Path, continuar: bool) -> dict[str, i
     with connection.conectar(cfg_staging) as con:
         manage.criar_tabelas(con, preservar=prontas)
 
-        console.print("\n[bold]4. Carga[/bold]\n")
+    def concluiu_tabela(tabela: str, linhas: int) -> None:
+        prontas.add(tabela)
+        gravar_checkpoint(prontas)
+        console.print(f"   [green]{tabela}[/green] {linhas:,} linhas")
 
-        def concluiu_tabela(tabela: str, linhas: int) -> None:
-            prontas.add(tabela)
-            gravar_checkpoint(prontas)
-            console.print(f"   [green]{tabela}[/green] {linhas:,} linhas")
+    console.print(f"\n[bold]4. Carga ({processos} processos)[/bold]\n")
+    # O pool trabalha sem a conexão do pai: as tabelas já existem e os índices
+    # vêm depois. Cada worker abre a sua própria conexão.
+    carga.carregar_tudo_paralelo(
+        por_tabela, cfg_staging, processos, pular=prontas,
+        ao_concluir_fatia=concluiu_tabela,
+    )
 
-        contagens = carga.carregar_tudo(
-            con, por_tabela, cfg_staging, pular=prontas,
-            ao_concluir_tabela=concluiu_tabela,
-        )
-
+    with connection.conectar(cfg_staging) as con:
         console.print("\n[bold]5. Índices[/bold]")
         ti = time.time()
         manage.criar_indices(con)
@@ -174,7 +184,8 @@ def construir(cfg: FirebirdConfig, origem: Path, continuar: bool) -> dict[str, i
 
     carga_s = time.time() - inicio
     console.print(f"\n[bold green]Base construída em {carga_s / 60:.1f} min[/bold green]")
-    contagens.update({k: v for k, v in totais.items() if k not in contagens})
+    # As contagens vêm do banco, não do somatório dos workers: é o que de fato
+    # ficou gravado, e não o que o ETL acha que gravou.
     return totais
 
 
@@ -194,6 +205,10 @@ def main() -> None:
     p.add_argument(
         "--continuar", action="store_true",
         help="retoma uma construção interrompida em vez de recomeçar",
+    )
+    p.add_argument(
+        "--processos", type=int, default=int(os.getenv("ETL_PROCESSOS", "6")),
+        help="workers paralelos (padrão 6; medido 4,28x contra 1 processo)",
     )
     p.add_argument("--log", default=os.getenv("LOG_LEVEL", "INFO"))
     args = p.parse_args()
@@ -222,6 +237,7 @@ def main() -> None:
     console.print(cfg.describe())
     console.print(f"origem ...... {origem}")
     console.print(f"competência . {competencia or '(não identificada pelo nome do diretório)'}")
+    console.print(f"processos ... {args.processos}")
 
     sm = StateManager()
     if competencia:
@@ -230,7 +246,7 @@ def main() -> None:
         )
 
     inicio = time.time()
-    totais = construir(cfg, origem, args.continuar)
+    totais = construir(cfg, origem, args.continuar, args.processos)
 
     t = Table(title="Base construída", show_header=True, header_style="bold cyan")
     t.add_column("Tabela")
@@ -273,4 +289,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Obrigatório no Windows: o pool usa 'spawn', e cada filho reimporta este
+    # módulo. Sem a guarda, cada filho chamaria main() de novo.
+    import multiprocessing as mp
+
+    mp.freeze_support()
     main()
