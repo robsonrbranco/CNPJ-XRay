@@ -1,4 +1,4 @@
-# 📝 Changelog - ETL Dados Públicos CNPJ
+# 📝 Changelog - CNPJ-XRay
 
 ## [2.2.0] - 2026-01-29
 

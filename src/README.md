@@ -1,4 +1,4 @@
-# 📁 Estrutura do Projeto - Receita Federal CNPJ
+# 📁 Estrutura do Projeto - CNPJ-XRay
 
 ## 📋 Organização das Pastas
 

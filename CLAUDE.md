@@ -1,4 +1,4 @@
-# 🤖 CLAUDE.md - Documentação de Melhorias do Sistema ETL
+# 🤖 CLAUDE.md - CNPJ-XRay (Sistema ETL)
 
 ## 📋 Resumo das Melhorias Implementadas
 

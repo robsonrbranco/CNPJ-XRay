@@ -1,6 +1,6 @@
-# 🏛️ Receita Federal do Brasil - Dados Públicos CNPJ
+# 🔎 CNPJ-XRay
 
-Sistema completo de ETL para processamento dos dados públicos do Cadastro Nacional da Pessoa Jurídica (CNPJ) da Receita Federal do Brasil.
+Raio-X dos dados públicos de CNPJ: ETL completo para baixar, processar e consultar o Cadastro Nacional da Pessoa Jurídica (CNPJ) da Receita Federal do Brasil em PostgreSQL.
 
 ## 📋 Sobre o Projeto
 
@@ -53,8 +53,8 @@ Este repositório contém um processo de ETL completo para:
 ### 2. **Instalação**
 ```bash
 # Clonar repositório
-git clone https://github.com/seu-usuario/Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ.git
-cd Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ
+git clone https://github.com/robsonrbranco/CNPJ-XRay.git
+cd CNPJ-XRay
 
 # Instalar dependências
 uv install
@@ -324,9 +324,16 @@ Contribuições são bem-vindas! Por favor:
 4. Push para branch (`git push origin feature/nova-funcionalidade`)
 5. Abra Pull Request
 
+## 🙏 Créditos
+
+O CNPJ-XRay deriva do trabalho de:
+
+- [aphonsoar/Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ](https://github.com/aphonsoar/Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ) — projeto original
+- [fonsecach/dados-publicos-cnpj](https://github.com/fonsecach/dados-publicos-cnpj) — base direta deste fork
+
 ## 📄 Licença
 
-Este projeto está sob a licença MIT. Veja o arquivo `LICENSE` para detalhes.
+Este projeto está sob a licença MIT, herdada dos projetos de origem. Veja o arquivo `LICENSE` para detalhes.
 
 ## 🚨 Aviso Legal
 
