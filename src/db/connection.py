@@ -1,0 +1,180 @@
+"""Conexão, criação e tuning do banco Firebird 3.0.
+
+O tuning de carga não é exposto em SQL pelo Firebird. Ele entra por dois
+caminhos distintos, e a diferença importa:
+
+* Na CRIAÇÃO do banco, via `DatabaseConfig` do firebird-driver: `page_size`,
+  `db_cache_size` e `forced_writes` viram parâmetros do DPB. `page_size` só
+  pode ser definido aqui — mudar depois exige backup/restore com gbak.
+* Em banco JÁ EXISTENTE, via Services API (o equivalente programático do
+  gfix): `set_write_mode` e `set_default_cache_size`.
+
+Force Write OFF acelera muito a carga porque o servidor deixa de forçar fsync
+a cada página gravada, mas enquanto estiver assim o banco não tem garantia de
+durabilidade. Como a carga é reproduzível a partir dos arquivos da RFB, o risco
+é aceitável durante o ETL e inaceitável depois dele — daí o par
+modo_carga()/modo_producao().
+"""
+
+import logging
+from contextlib import contextmanager
+
+from firebird.driver import (
+    DatabaseConfig,
+    DatabaseError,
+    DbWriteMode,
+    connect,
+    connect_server,
+    create_database,
+    driver_config,
+)
+
+from .config import FirebirdConfig, load_config
+
+logger = logging.getLogger(__name__)
+
+# Nome sob o qual a configuração do banco fica registrada no driver.
+CONFIG_NAME = "cnpjxray"
+
+
+def registrar(cfg: FirebirdConfig | None = None, forced_writes: bool = True) -> str:
+    """Registra (ou reconfigura) o banco no driver e devolve o nome do registro.
+
+    `forced_writes` só tem efeito na criação do banco; para um banco existente
+    use modo_carga()/modo_producao().
+    """
+    cfg = cfg or load_config()
+
+    if cfg.client_library:
+        driver_config.fb_client_library.value = cfg.client_library
+
+    db = driver_config.get_database(CONFIG_NAME)
+    if db is None:
+        db = driver_config.register_database(CONFIG_NAME)
+
+    db.dsn.value = cfg.dsn
+    db.user.value = cfg.user
+    db.password.value = cfg.password
+    db.charset.value = cfg.charset
+    db.db_charset.value = cfg.charset
+    db.page_size.value = cfg.page_size
+    db.forced_writes.value = forced_writes
+    if cfg.cache_pages:
+        db.db_cache_size.value = cfg.cache_pages
+
+    return CONFIG_NAME
+
+
+@contextmanager
+def conectar(cfg: FirebirdConfig | None = None):
+    """Conexão com o banco configurado, fechada ao sair do bloco."""
+    nome = registrar(cfg)
+    con = connect(nome)
+    try:
+        yield con
+    finally:
+        con.close()
+
+
+@contextmanager
+def conectar_servidor(cfg: FirebirdConfig | None = None):
+    """Conexão com a Services API (gfix/gbak/gstat programáticos)."""
+    cfg = cfg or load_config()
+    if cfg.client_library:
+        driver_config.fb_client_library.value = cfg.client_library
+    svc = connect_server(
+        f"inet://{cfg.host}:{cfg.port}",
+        user=cfg.user,
+        password=cfg.password,
+    )
+    try:
+        yield svc
+    finally:
+        svc.close()
+
+
+def database_exists(cfg: FirebirdConfig | None = None) -> bool:
+    try:
+        with conectar(cfg):
+            return True
+    except DatabaseError:
+        return False
+
+
+def create_if_not_exists(cfg: FirebirdConfig | None = None) -> bool:
+    """Cria o banco se ainda não existir. Devolve True se criou agora.
+
+    Já nasce com page_size de 16 KB, o cache configurado e Force Write OFF —
+    o banco recém-criado existe para receber a carga.
+    """
+    cfg = cfg or load_config()
+
+    if database_exists(cfg):
+        logger.info("Banco já existe: %s", cfg.database)
+        return False
+
+    nome = registrar(cfg, forced_writes=False)
+    logger.info(
+        "Criando banco %s (page_size=%d, charset=%s, cache=%s páginas, forced_writes=OFF)",
+        cfg.database, cfg.page_size, cfg.charset, f"{cfg.cache_pages:,}" or "padrão",
+    )
+    con = create_database(nome)
+    con.close()
+    return True
+
+
+def _set_write_mode(cfg: FirebirdConfig, mode: DbWriteMode, rotulo: str) -> None:
+    try:
+        with conectar_servidor(cfg) as svc:
+            svc.database.set_write_mode(database=cfg.database, mode=mode)
+        logger.info("Force Write = %s", rotulo)
+    except DatabaseError as e:
+        logger.warning("Não foi possível ajustar Force Write (%s): %s", rotulo, e)
+
+
+def modo_carga(cfg: FirebirdConfig | None = None) -> None:
+    """Prepara um banco existente para carga em massa.
+
+    Force Write ASYNC + cache grande. Os índices NÃO entram aqui: são criados
+    depois da carga, por manage.criar_indices().
+    """
+    cfg = cfg or load_config()
+    _set_write_mode(cfg, DbWriteMode.ASYNC, "ASYNC (carga)")
+
+    if cfg.cache_pages:
+        try:
+            with conectar_servidor(cfg) as svc:
+                svc.database.set_default_cache_size(
+                    database=cfg.database, size=cfg.cache_pages
+                )
+            logger.info(
+                "Cache do banco = %s páginas (~%d MB)", f"{cfg.cache_pages:,}", cfg.cache_mb
+            )
+        except DatabaseError as e:
+            logger.warning("Não foi possível ajustar o cache: %s", e)
+
+
+def modo_producao(cfg: FirebirdConfig | None = None) -> None:
+    """Devolve o banco ao modo seguro depois da carga."""
+    cfg = cfg or load_config()
+    _set_write_mode(cfg, DbWriteMode.SYNC, "SYNC (produção)")
+
+
+def estatisticas(cfg: FirebirdConfig | None = None) -> None:
+    """Recalcula a seletividade dos índices.
+
+    O otimizador do Firebird usa a seletividade gravada quando o índice foi
+    criado. Depois de uma carga grande ela fica defasada e o plano escolhido
+    piora — daí a recomputação ao fim do ETL.
+    """
+    with conectar(cfg) as con:
+        cur = con.cursor()
+        cur.execute(
+            "SELECT TRIM(RDB$INDEX_NAME) FROM RDB$INDICES "
+            "WHERE RDB$SYSTEM_FLAG = 0 AND COALESCE(RDB$INDEX_INACTIVE, 0) = 0"
+        )
+        nomes = [r[0] for r in cur.fetchall()]
+        for nome in nomes:
+            cur.execute(f"SET STATISTICS INDEX {nome}")
+        con.commit()
+        logger.info("Seletividade recalculada para %d índices", len(nomes))

@@ -1,0 +1,134 @@
+"""Configuração de acesso ao Firebird, lida do ambiente (.env)."""
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+# Firebird 3.0 aceita no máximo 16 KB de página (32 KB só a partir do 4.0).
+# Página grande reduz profundidade de índice e melhora leitura sequencial, que
+# é o perfil desta base.
+DEFAULT_PAGE_SIZE = 16384
+
+# Quanto maior o batch, menos idas ao servidor — mas cada batch vira uma lista
+# de tuplas viva em memória. 50k linhas de estabelecimento ~ 100 MB.
+DEFAULT_BATCH_SIZE = 50_000
+
+# Linhas por transação. Transação longa demais em Firebird segura a versão
+# antiga das páginas e infla o banco; curta demais paga commit à toa.
+DEFAULT_COMMIT_EVERY = 500_000
+
+
+def _env(name: str, default=None):
+    v = os.getenv(name)
+    return v if v not in (None, "") else default
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(_env(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _total_ram_mb() -> int:
+    """RAM física total, para dimensionar o cache. 0 se não der para descobrir."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MemoryStatusEx(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = MemoryStatusEx()
+            stat.dwLength = ctypes.sizeof(MemoryStatusEx)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            return int(stat.ullTotalPhys // (1024 * 1024))
+        return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // (1024 * 1024))
+    except Exception:
+        return 0
+
+
+@dataclass
+class FirebirdConfig:
+    host: str = "localhost"
+    port: int = 3050
+    # Caminho do .fdb COMO O SERVIDOR o enxerga.
+    database: str = ""
+    user: str = "SYSDBA"
+    password: str = ""
+    charset: str = "UTF8"
+    page_size: int = DEFAULT_PAGE_SIZE
+    # Tamanho do cache de páginas do banco, em MB. 0 = deixa o padrão do servidor.
+    cache_mb: int = 0
+    batch_size: int = DEFAULT_BATCH_SIZE
+    commit_every: int = DEFAULT_COMMIT_EVERY
+    # Biblioteca cliente (fbclient.dll / libfbclient.so). Vazio = busca no PATH.
+    client_library: str = ""
+
+    @property
+    def dsn(self) -> str:
+        """DSN no formato aceito pelo firebird-driver."""
+        return f"inet://{self.host}:{self.port}/{self.database}"
+
+    @property
+    def cache_pages(self) -> int:
+        """Cache em páginas, que é a unidade que o Firebird usa."""
+        if self.cache_mb <= 0:
+            return 0
+        return max(1024, (self.cache_mb * 1024 * 1024) // self.page_size)
+
+    def describe(self) -> str:
+        cache = (
+            f"{self.cache_mb} MB ({self.cache_pages:,} páginas)"
+            if self.cache_mb > 0
+            else "padrão do servidor"
+        )
+        return (
+            f"servidor .... {self.host}:{self.port}\n"
+            f"banco ....... {self.database}\n"
+            f"usuário ..... {self.user}\n"
+            f"charset ..... {self.charset}\n"
+            f"page size ... {self.page_size} bytes\n"
+            f"cache ....... {cache}\n"
+            f"batch ....... {self.batch_size:,} linhas\n"
+            f"commit ...... a cada {self.commit_every:,} linhas"
+        )
+
+
+def load_config() -> FirebirdConfig:
+    """Monta a configuração a partir das variáveis de ambiente."""
+    database = _env("DB_NAME", "")
+    if database:
+        # Normaliza separadores: o servidor Windows aceita ambos, mas o DSN
+        # fica ilegível com barra invertida misturada.
+        database = str(Path(database)).replace("\\", "/")
+
+    cache_mb = _int_env("FB_CACHE_MB", 0)
+    if cache_mb < 0:
+        # Negativo = fração da RAM física. -50 significa "metade da RAM".
+        ram = _total_ram_mb()
+        cache_mb = int(ram * min(abs(cache_mb), 90) / 100) if ram else 0
+
+    return FirebirdConfig(
+        host=_env("DB_HOST", "localhost"),
+        port=_int_env("DB_PORT", 3050),
+        database=database,
+        user=_env("DB_USER", "SYSDBA"),
+        password=_env("DB_PASSWORD", ""),
+        charset=_env("DB_CHARSET", "UTF8"),
+        page_size=_int_env("FB_PAGE_SIZE", DEFAULT_PAGE_SIZE),
+        cache_mb=cache_mb,
+        batch_size=_int_env("FB_BATCH_SIZE", DEFAULT_BATCH_SIZE),
+        commit_every=_int_env("FB_COMMIT_EVERY", DEFAULT_COMMIT_EVERY),
+        client_library=_env("FB_CLIENT_LIBRARY", ""),
+    )
