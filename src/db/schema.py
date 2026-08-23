@@ -46,6 +46,25 @@ municipio) não encontrou UM byte nessa faixa.
 WIN_PTBR ordena acento como o português do Brasil espera: sem ela, ORDER BY
 razao_social joga todo nome iniciado por acento para depois do Z.
 
+E ela traz um efeito que vale conhecer antes de escrever consulta: a comparação
+é INSENSÍVEL a acento e a caixa, enquanto o dado guardado continua fiel.
+Verificado na base:
+
+    'SAO'    = 'SÃO'      -> verdadeiro
+    'sao'    = 'SAO'      -> verdadeiro
+    'ACUCAR' = 'AÇÚCAR'   -> verdadeiro
+    'JOSE'   = 'JOSÉ'     -> verdadeiro
+
+    SELECT descricao FROM cnae ...  -> 'Transporte aéreo de passageiros'
+
+Ou seja, quem consulta acha "SÃO PAULO" digitando "sao paulo", sem precisar
+normalizar nada. Isso recupera boa parte da busca que se perdeu ao sair do
+PostgreSQL: não substitui trigrama (não acha por trecho no meio do nome nem
+tolera erro de digitação), mas resolve o caso comum de acento e caixa.
+
+O outro lado: não existe comparação sensível a acento nestas colunas. Quem
+precisar distinguir 'JOSE' de 'JOSÉ' tem que usar COLLATE explícito na consulta.
+
 Atenção ao parsear os CSV da RFB: o campo `complemento` contém ";" dentro de
 valor entre aspas (ex.: "BLOCO: 01; APT: 144;"). Split ingênuo por ";" corrompe
 ~5% das linhas de estabelecimento — o parser precisa honrar aspas.
