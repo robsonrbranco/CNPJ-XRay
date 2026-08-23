@@ -24,11 +24,13 @@ Ordem das fases, e o porquê de cada uma:
                                  em Python, não o engine -- ver src/etl/carga
     5. índices                   agora, com as tabelas já povoadas, e só para
                                  performance de consulta, nunca como trava
-    6. SET STATISTICS            a seletividade gravada na criação do índice
+    6. chave repetida            a Receita publica CNPJ duplicado; a linha extra
+                                 sai aqui, com RDB$DB_KEY -- ver src/db/dedup
+    7. SET STATISTICS            a seletividade gravada na criação do índice
                                  fica defasada depois de uma carga grande
-    7. Force Write SYNC          devolve a durabilidade antes de virar produção
-    8. validação                 nada é promovido sem estar completo
-    9. troca + read-only         produção é base de consulta: o engine passa a
+    8. Force Write SYNC          devolve a durabilidade antes de virar produção
+    9. validação                 nada é promovido sem estar completo
+   10. troca + read-only         produção é base de consulta: o engine passa a
                                  recusar escrita
 """
 
@@ -52,7 +54,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.blue_green.state import StateManager  # noqa: E402
 from src.blue_green.switch import BlueGreenSwitcher  # noqa: E402
 from src.blue_green.validator import validar  # noqa: E402
-from src.db import connection, manage, schema  # noqa: E402
+from src.db import connection, dedup, manage, schema  # noqa: E402
 from src.db.config import FirebirdConfig, load_config  # noqa: E402
 from src.etl import carga  # noqa: E402
 
@@ -174,12 +176,24 @@ def construir(
         manage.criar_indices(con)
         console.print(f"   {len(schema.INDEXES)} índices em {time.time() - ti:.1f}s")
 
+        # Depois dos índices, e antes da validação: a busca por chave repetida
+        # percorre a tabela inteira, e o índice a torna viável.
+        console.print("\n[bold]6. Chaves repetidas na fonte[/bold]")
+        ti = time.time()
+        removidas = dedup.remover(con)
+        if removidas:
+            for tab, n in removidas.items():
+                console.print(f"   [yellow]{tab}[/yellow]: {n:,} linha(s) removida(s)")
+        else:
+            console.print("   nenhuma")
+        console.print(f"   [dim]{time.time() - ti:.0f}s[/dim]")
+
         totais = {tab: manage.contar(con, tab) for tab in schema.TABLES}
 
-    console.print("\n[bold]6. Estatísticas dos índices[/bold]")
+    console.print("\n[bold]7. Estatísticas dos índices[/bold]")
     connection.estatisticas(cfg_staging)
 
-    console.print("\n[bold]7. Modo de produção[/bold]")
+    console.print("\n[bold]8. Modo de produção[/bold]")
     connection.modo_producao(cfg_staging)
 
     carga_s = time.time() - inicio
@@ -256,7 +270,7 @@ def main() -> None:
     console.print()
     console.print(t)
 
-    console.print("\n[bold]8. Validação[/bold]")
+    console.print("\n[bold]9. Validação[/bold]")
     r = validar(cfg)
     if not r.is_valid:
         console.print(f"[bold red]{r.summary}[/bold red]")
@@ -267,7 +281,7 @@ def main() -> None:
     sm.update_staging_processed()
 
     if args.switch:
-        console.print("\n[bold]9. Troca para produção[/bold]")
+        console.print("\n[bold]10. Troca para produção[/bold]")
         res = BlueGreenSwitcher(cfg, sm).switch()
         cor = "green" if res.success else "red"
         console.print(f"[bold {cor}]{res.message}[/bold {cor}]")
@@ -277,7 +291,7 @@ def main() -> None:
         # A base de produção é base de consulta: read-only no header faz o
         # engine recusar qualquer escrita, em vez de isso ser só um combinado
         # operacional que um UPDATE acidental quebra.
-        console.print("\n[bold]10. Produção em somente leitura[/bold]")
+        console.print("\n[bold]11. Produção em somente leitura[/bold]")
         connection.modo_somente_leitura(cfg)
         console.print("   [green]o engine passa a recusar qualquer escrita[/green]")
     else:

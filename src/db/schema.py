@@ -233,6 +233,19 @@ INDEXES: dict[str, tuple[str, ...]] = {
 }
 
 
+# Chave natural de cada tabela: o que a Receita descreve como identificador do
+# registro. NÃO é PRIMARY KEY no banco -- serve para detectar carga duplicada e
+# para a remoção de repetição que a fonte traz.
+#
+# `socios` fica de fora: o mesmo CNPJ tem vários sócios e a RFB mascara o CPF,
+# então não existe identificador de linha.
+CHAVES_NATURAIS: dict[str, tuple[str, ...]] = {
+    "empresa": ("cnpj_basico",),
+    "estabelecimento": ("cnpj_basico", "cnpj_ordem", "cnpj_dv"),
+    "simples": ("cnpj_basico",),
+}
+
+
 def columns(table: str) -> list[Column]:
     return TABLES[table]
 
