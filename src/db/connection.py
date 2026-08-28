@@ -23,6 +23,7 @@ from firebird.driver import (
     DatabaseConfig,
     DatabaseError,
     DbAccessMode,
+    DbSpaceReservation,
     DbWriteMode,
     connect,
     connect_server,
@@ -30,6 +31,7 @@ from firebird.driver import (
     get_api,
 )
 
+from . import gfix
 from .config import FirebirdConfig, load_config
 
 logger = logging.getLogger(__name__)
@@ -140,7 +142,40 @@ def create_if_not_exists(cfg: FirebirdConfig | None = None) -> bool:
     api = get_api()
     att = api.util.execute_create_database(sql, 3)  # dialeto 3
     att.detach()
+
+    # Antes de qualquer página de dado ser escrita.
+    modo_espaco_cheio(cfg)
     return True
+
+
+def modo_espaco_cheio(cfg: FirebirdConfig | None = None) -> None:
+    """Desliga a reserva de espaço nas páginas de dados.
+
+    Por padrão o Firebird deixa parte de cada página de dados livre para
+    guardar versões futuras do registro. Isso serve a uma base que recebe
+    UPDATE — e esta não recebe: nasce por carga em massa, nunca é alterada e
+    termina read-only. Cada byte reservado é desperdício permanente,
+    multiplicado por 220 milhões de linhas.
+
+    Medido numa amostra de 120 mil linhas de estabelecimento, com índices:
+    38,3 MB com reserva contra 34,0 MB sem, ou seja 11,3% menos. Nos 35 GB da
+    base isso são cerca de 4 GB.
+
+    Diferente do Force Write, isto NÃO é revertido em modo_producao(): a
+    ausência de reserva é uma propriedade permanente desta base, não um ajuste
+    de carga. E só vale para páginas escritas DEPOIS da mudança — por isso é
+    aplicado na criação do banco, antes de existir qualquer dado.
+    """
+    cfg = cfg or load_config()
+    try:
+        with conectar_servidor(cfg) as svc:
+            svc.database.set_space_reservation(
+                database=cfg.database, mode=DbSpaceReservation.USE_FULL
+            )
+    except (DatabaseError, OSError) as e:
+        logger.debug("Services API não ajustou a reserva (%s) — usando gfix", e)
+        gfix.executar(cfg, "-use", "full")
+    logger.info("Reserva de espaço = USE_FULL (sem espaço ocioso por página)")
 
 
 def _set_write_mode(cfg: FirebirdConfig, mode: DbWriteMode, rotulo: str) -> None:

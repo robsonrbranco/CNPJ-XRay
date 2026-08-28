@@ -19,13 +19,10 @@ de um caminho que falha, ela cai para o gfix em vez de abortar.
 """
 
 import logging
-import os
-import shutil
-import subprocess
-from pathlib import Path
 
 from firebird.driver import DatabaseError, OnlineMode, ShutdownMethod, ShutdownMode
 
+from src.db import gfix
 from src.db.config import FirebirdConfig
 from src.db.connection import conectar_servidor
 
@@ -34,36 +31,6 @@ logger = logging.getLogger(__name__)
 # Segundos que o servidor espera as conexões saírem antes de derrubá-las.
 # 0 = imediato, que é o que se quer numa janela de troca.
 TIMEOUT_SHUTDOWN = 0
-
-
-def _gfix_binario(cfg: FirebirdConfig) -> str | None:
-    """Localiza o gfix: ao lado do fbclient configurado, ou no PATH."""
-    if cfg.client_library:
-        candidato = Path(cfg.client_library).parent / (
-            "gfix.exe" if os.name == "nt" else "gfix"
-        )
-        if candidato.exists():
-            return str(candidato)
-    return shutil.which("gfix")
-
-
-def _via_gfix(cfg: FirebirdConfig, database: str, *args: str) -> None:
-    binario = _gfix_binario(cfg)
-    if not binario:
-        raise RuntimeError(
-            "gfix não encontrado — instale as ferramentas do Firebird ou "
-            "aponte FB_CLIENT_LIBRARY para o diretório da instalação"
-        )
-    # gfix fala com o servidor usando a forma host:caminho.
-    alvo = f"{cfg.host}:{database}"
-    r = subprocess.run(
-        [binario, *args, "-user", cfg.user, "-password", cfg.password, alvo],
-        capture_output=True,
-        text=True,
-    )
-    saida = (r.stdout + r.stderr).strip()
-    if r.returncode != 0 or saida:
-        raise RuntimeError(f"gfix {' '.join(args)} falhou: {saida or r.returncode}")
 
 
 def desligar(cfg: FirebirdConfig, database: str) -> None:
@@ -81,7 +48,7 @@ def desligar(cfg: FirebirdConfig, database: str) -> None:
     except (DatabaseError, OSError) as e:
         logger.debug("Services API não desligou %s (%s) — tentando gfix", database, e)
 
-    _via_gfix(cfg, database, "-shut", "full", "-force", str(TIMEOUT_SHUTDOWN))
+    gfix.executar(cfg, "-shut", "full", "-force", str(TIMEOUT_SHUTDOWN), database=database)
     logger.info("Banco offline via gfix: %s", database)
 
 
@@ -95,5 +62,5 @@ def religar(cfg: FirebirdConfig, database: str) -> None:
     except (DatabaseError, OSError) as e:
         logger.debug("Services API não religou %s (%s) — tentando gfix", database, e)
 
-    _via_gfix(cfg, database, "-online")
+    gfix.executar(cfg, "-online", database=database)
     logger.info("Banco online via gfix: %s", database)
