@@ -1,3 +1,10 @@
+"""Estado da troca blue-green, persistido em blue_green_state.json.
+
+Guarda de qual competência veio a base em produção e quando cada etapa
+aconteceu. É metadado para operação — a verdade sobre o conteúdo está no
+próprio banco, e é ela que o validator confere antes de qualquer troca.
+"""
+
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,7 +20,7 @@ def _now_iso() -> str:
 
 
 class StateManager:
-    def __init__(self, state_file_path: str = None):
+    def __init__(self, state_file_path: str | None = None):
         self._path = Path(state_file_path) if state_file_path else _DEFAULT_STATE_FILE
 
     def read(self) -> dict:
@@ -32,10 +39,10 @@ class StateManager:
             json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8"
         )
 
-    def update_staging_downloaded(self, source_month: str) -> None:
+    def update_staging_downloaded(self, source_month: str, database: str = "") -> None:
         state = self.read()
         state["staging"] = {
-            "database": "receita_federal_staging",
+            "database": database,
             "source_month": source_month,
             "downloaded_at": _now_iso(),
             "processed_at": None,
@@ -48,12 +55,12 @@ class StateManager:
             state["staging"]["processed_at"] = _now_iso()
             self._write(state)
 
-    def promote_staging(self) -> None:
+    def promote_staging(self, database: str = "") -> None:
         state = self.read()
         staging = state.get("staging") or {}
         now = _now_iso()
         state["active"] = {
-            "database": "receita_federal",
+            "database": database or staging.get("database", ""),
             "source_month": staging.get("source_month"),
             "downloaded_at": staging.get("downloaded_at"),
             "processed_at": staging.get("processed_at"),

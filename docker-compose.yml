@@ -1,24 +1,43 @@
 services:
-  postgres:
-    image: docker.io/postgres:16-alpine
-    container_name: receita_postgres
+  firebird:
+    image: firebirdsql/firebird:3.0.11
+    container_name: cnpj_xray_firebird
     environment:
-      POSTGRES_DB: ${DB_NAME:-receita_federal}
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD nao configurado no .env}
-      PGDATA: /var/lib/postgresql/data/pgdata
+      FIREBIRD_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD nao configurado no .env}
+      # Cria o banco no primeiro start, ja com pagina de 16 KB e UTF8.
+      # page_size so pode ser definido na criacao -- mudar depois exige gbak.
+      FIREBIRD_DATABASE: cnpj_xray.fdb
+      FIREBIRD_DATABASE_PAGE_SIZE: "16384"
+      FIREBIRD_DATABASE_DEFAULT_CHARSET: UTF8
+
+      # --- tuning de carga (vira firebird.conf dentro do container) ---
+      # Cache de paginas do servidor. 262144 paginas x 16 KB = 4 GB.
+      # Ajuste conforme a RAM da maquina; ver docs/carga-firebird.md.
+      FIREBIRD_CONF_DefaultDbCachePages: "${FB_CACHE_PAGES:-262144}"
+      # Sem varredura automatica durante a carga: o sweep competiria por I/O
+      # com o ETL. Roda manualmente depois.
+      FIREBIRD_CONF_SweepInterval: "0"
+      # Reduz o custo de alocacao de pagina em base que so cresce.
+      FIREBIRD_CONF_FileSystemCacheThreshold: "99999K"
+      # SuperServer: um processo, cache compartilhado -- e o que serve para
+      # carga em massa. Classic/SuperClassic dariam cache por conexao.
+      FIREBIRD_CONF_ServerMode: Super
     ports:
-      - "${DB_PORT:-5436}:5432"
+      - "${DB_PORT:-3050}:3050"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - firebird_data:/var/lib/firebird/data
+      # Os arquivos da Receita, visiveis ao servidor. So e necessario se algum
+      # dia a carga voltar a usar EXTERNAL TABLE; para o ETL atual o cliente
+      # le os arquivos e o servidor nao precisa enxerga-los.
+      - ./Download:/data/download:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-receita_federal}"]
+      test: ["CMD-SHELL", "/usr/local/firebird/bin/isql -u SYSDBA -p $$FIREBIRD_ROOT_PASSWORD -q -e 'SELECT 1 FROM RDB$$DATABASE;' /var/lib/firebird/data/cnpj_xray.fdb || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
-    shm_size: 256mb
+      start_period: 40s
 
 volumes:
-  postgres_data:
+  firebird_data:
     driver: local

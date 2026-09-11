@@ -1,4 +1,4 @@
-# 🚀 Guia de Configuração Inicial
+# 🚀 CNPJ-XRay - Guia de Configuração Inicial
 
 ## ✅ Checklist Pré-Execução
 
@@ -146,7 +146,7 @@ uv run src/etl/ETL_dados_publicos_empresas.py 01-2026
 ```bash
 # Verificar se está no diretório correto
 pwd
-# Deve mostrar: /home/cleiton/Projetos/GitHub/Python/dados-publicos-cnpj
+# Deve mostrar o diretório raiz do CNPJ-XRay
 
 # Verificar se .env existe
 ls -la .env

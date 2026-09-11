@@ -152,3 +152,13 @@ extracted/
 
 # Database dumps
 *.sql
+# Dados brutos baixados da Receita Federal (dezenas de GB)
+Download/
+
+# Arquivos de banco Firebird (dezenas de GB)
+bd/
+*.fdb
+
+# Estado do blue-green: runtime por maquina, recriado pelo StateManager
+blue_green_state.json
+checkpoint.json

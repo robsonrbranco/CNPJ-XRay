@@ -217,7 +217,7 @@ wheels = [
 ]
 
 [[package]]
-name = "receita-federal-do-brasil-dados-publicos-cnpj"
+name = "cnpj-xray"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
