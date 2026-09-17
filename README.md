@@ -1,346 +1,157 @@
 # 🔎 CNPJ-XRay
 
-Raio-X dos dados públicos de CNPJ: ETL completo para baixar, processar e consultar o Cadastro Nacional da Pessoa Jurídica (CNPJ) da Receita Federal do Brasil em PostgreSQL.
+ETL e consulta dos dados públicos de CNPJ da Receita Federal do Brasil, em
+**Firebird 3.0**.
 
-## 📋 Sobre o Projeto
+São 37 arquivos publicados mensalmente pela Receita, ~7,8 GB compactados e
+~222 milhões de linhas, que viram uma base Firebird de ~33 GB pronta para
+consulta.
 
-A Receita Federal do Brasil disponibiliza bases com os dados públicos do cadastro nacional de pessoas jurídicas (CNPJ). Nelas constam as mesmas informações que conseguimos ver no cartão do CNPJ, quando fazemos uma consulta individual, acrescidas de outros dados de Simples Nacional, sócios e etc.
+## Como funciona
 
-Este repositório contém um processo de ETL completo para:
-- **🔽 Baixar** os arquivos da fonte oficial
-- **📦 Descompactar** os arquivos ZIP
-- **🔧 Processar** e tratar os dados
-- **💾 Inserir** em banco PostgreSQL otimizado
-- **🔍 Consultar** dados de forma eficiente
+A base de produção é **somente leitura** e nunca é alterada no lugar. Toda
+competência nova constrói uma base do zero num arquivo de staging e só entra em
+produção pela troca do arquivo (blue-green). Isso torna a atualização atômica e
+reversível até o último passo, e permite carregar sem nenhuma trava — sem
+PRIMARY KEY, NOT NULL ou FOREIGN KEY.
 
-## 🗂️ Estrutura do Projeto
+Não é descuido: os dados da Receita chegam com código órfão e chave repetida
+reais, e uma constraint transformaria cada ocorrência numa exceção no meio de
+222 milhões de INSERTs. Os índices existem **só** para performance de consulta,
+e são criados depois da carga. O relatório de
+[`src/validation/qualidade.py`](src/validation/qualidade.py) mede o estrago
+depois, sobre a base pronta.
+
+## Estrutura
 
 ```
-📁 src/
-├── 📁 etl/                    # 🔄 Processo ETL Principal
-│   ├── ETL_dados_publicos_empresas.py    # Script principal do ETL
-│   ├── resume_etl.py                     # Retomar ETL interrompido
-│   └── README.md
-├── 📁 validation/             # ✅ Validação de Dados
-│   ├── check_database_status.py         # Verificar integridade
-│   └── README.md
-├── 📁 indexes/                # 📊 Otimização de Performance
-│   ├── create_indexes.py                # Criar índices otimizados
-│   └── README.md
-├── 📁 sql/                    # 📄 Scripts SQL Indispensáveis
-│   ├── banco_de_dados.sql               # Estrutura do banco
-│   ├── database_setup.sql               # Configurações avançadas
-│   ├── consulta_empresa_completa.sql    # Consultas principais
-│   └── README.md
-├── 📁 auxiliary/              # 🛠️ Scripts Auxiliares
-│   ├── 📁 python/
-│   │   ├── consultar_empresa.py         # Interface de consulta
-│   │   ├── dump_and_restore.py          # Backup/restauração
-│   │   └── sql_dump_generator.py        # Gerador de dumps SQL
-│   ├── 📁 sql/                          # Scripts SQL auxiliares
-│   ├── README.md
-│   └── DUMP_RESTORE_README.md
-└── README.md
+src/
+  db/          camada Firebird: schema, conexão, carga, índices, dedup
+  etl/         download multipart, leitura dos .zip e pipeline de construção
+  blue_green/  troca de arquivo, validação e modos de acesso
+  validation/  relatório de qualidade da base
+  consulta/    ficha de empresa por CNPJ
+  sql/         consulta de referência contra a Base dos Dados (BigQuery)
 ```
 
-## 🚀 Início Rápido
+## Pré-requisitos
 
-### 1. **Pré-requisitos**
-- PostgreSQL 12+ instalado
-- Python 3.8+
-- UV (recomendado) ou pip
+- Python 3.13
+- Firebird 3.0 rodando (o `fbclient.dll`/`libfbclient.so` precisa estar
+  acessível ao cliente)
+- ~45 GB livres: ~8 GB de `.zip`, ~33 GB da base nova, mais a base atual
+  durante a troca
 
-### 2. **Instalação**
+## Instalação
+
 ```bash
-# Clonar repositório
 git clone https://github.com/robsonrbranco/CNPJ-XRay.git
 cd CNPJ-XRay
-
-# Instalar dependências
-uv install
-# ou: pip install -r requirements.txt
-
-# Configurar ambiente
-cp env.example .env
-# Editar .env com suas configurações
+uv sync
+cp .env.example .env
 ```
 
-### 3. **Configuração do Banco**
-```bash
-# Criar banco de dados
-createdb -U postgres receita_federal
+Ver [CONFIGURACAO_INICIAL.md](CONFIGURACAO_INICIAL.md) para o `.env`.
 
-# Criar estrutura
-psql -U postgres -d receita_federal -f src/sql/banco_de_dados.sql
-```
+## Uso
 
-### 4. **Execução**
-
-#### 🎯 Modos de Execução do ETL
-
-O ETL suporta **3 modos de operação**:
-
-**a) Modo Interativo (padrão):**
-```bash
-# Solicita ano/mês interativamente
-uv run src/etl/ETL_dados_publicos_empresas.py
-```
-
-**b) Modo Automático (versão mais recente):**
-```bash
-# Detecta e baixa automaticamente a versão mais recente da Receita Federal
-uv run src/etl/ETL_dados_publicos_empresas.py --last
-```
-
-**c) Modo Específico (data customizada):**
-```bash
-# Baixa uma versão específica (formato: MM-AAAA)
-uv run src/etl/ETL_dados_publicos_empresas.py 01-2025
-uv run src/etl/ETL_dados_publicos_empresas.py 12-2024
-```
-
-**Ver ajuda:**
-```bash
-uv run src/etl/ETL_dados_publicos_empresas.py --help
-```
-
-#### 📋 Processos Complementares
+### Baixar uma competência
 
 ```bash
-# Validar dados
-uv run src/validation/check_database_status.py
-
-# Criar índices
-uv run src/indexes/create_indexes.py
-
-# Aplicar configurações avançadas
-psql -U postgres -d receita_federal -f src/sql/database_setup.sql
+uv run python -m src.etl.download --listar
 ```
 
-## 📊 Dados Processados
-
-### Tabelas Principais (~200M registros):
-- **`empresa`**: Dados básicos das empresas (~63M registros)
-- **`estabelecimento`**: Estabelecimentos/filiais (~66M registros)
-- **`socios`**: Sócios e representantes (~26M registros)
-- **`simples`**: Regime tributário Simples Nacional (~44M registros)
-
-### Tabelas de Referência:
-- **`cnae`**: Códigos de atividade econômica (1.359 registros)
-- **`natureza`**: Naturezas jurídicas (90 registros)
-- **`municipio`**: Códigos dos municípios (5.572 registros)
-- **`pais`**: Códigos dos países (255 registros)
-- **`qualificacao`**: Qualificações de sócios (68 registros)
-- **`motivo`**: Motivos de situação cadastral (63 registros)
-
-## 🔍 Consultas e Uso
-
-### Consultar Empresa por CNPJ:
 ```bash
-# CNPJ completo
-uv run src/auxiliary/python/consultar_empresa.py 11222333000181
-
-# CNPJ básico
-uv run src/auxiliary/python/consultar_empresa.py 11222333
-
-# Com formatação
-uv run src/auxiliary/python/consultar_empresa.py 11.222.333/0001-81
+uv run python -m src.etl.download --competencia 2026-09
 ```
 
-### Consultas SQL Diretas:
+Sem `--competencia` ele pega a mais recente publicada. O download é multipart
+com paralelismo por pedaço, retomável, e confere cada arquivo byte a byte contra
+o manifesto WebDAV. O servidor da Receita oscila muito — ele espera a origem
+voltar em vez de falhar.
+
+### Construir a base
+
+```bash
+uv run python -m src.etl.pipeline --origem ./Download --switch --processos 8
+```
+
+Onze fases: base nova → modo carga → tabelas sem trava → carga em N processos →
+índices → remoção de chave repetida da fonte → estatísticas → modo produção →
+validação → troca → read-only. Sem `--switch` a base fica em staging, sem
+promover. Com `--continuar` retoma de onde parou.
+
+Leva cerca de 6 h em 8 processos.
+
+### Consultar
+
+```bash
+uv run python -m src.consulta.empresa 08314885
+```
+
+```bash
+uv run python -m src.consulta.empresa 08.314.885/0001-05 --json
+```
+
+### Relatório de qualidade
+
+```bash
+uv run python -m src.validation.qualidade --producao
+```
+
+## Consulta SQL direta
+
+`JOIN` com tabela de domínio tem que ser `LEFT JOIN` — existe código órfão real
+na fonte, e `INNER JOIN` faria a linha sumir por causa de um código que a
+Receita publicou errado.
+
 ```sql
--- Buscar empresa completa
-SELECT 
-    e.razao_social,
-    est.nome_fantasia,
-    est.situacao_cadastral,
-    cnae.descricao as atividade_principal,
-    mun.descricao as municipio,
-    est.uf
+SELECT e.razao_social, est.nome_fantasia, est.situacao_cadastral,
+       cn.descricao AS atividade_principal, mu.descricao AS municipio, est.uf
 FROM empresa e
 JOIN estabelecimento est ON e.cnpj_basico = est.cnpj_basico
-LEFT JOIN cnae ON est.cnae_fiscal_principal = cnae.codigo
-LEFT JOIN municipio mun ON est.municipio = mun.codigo
-WHERE e.cnpj_basico = '11222333'
-AND est.cnpj_ordem = '0001';
+LEFT JOIN cnae cn ON est.cnae_fiscal_principal = cn.codigo
+LEFT JOIN municipio mu ON est.municipio = mu.codigo
+WHERE e.cnpj_basico = '08314885' AND est.cnpj_ordem = '0001';
 ```
 
-## 💾 Backup e Restauração
+A base usa `WIN1252` com collation `WIN_PTBR`, que compara **sem acento e sem
+caixa** — `ORDER BY razao_social` ordena certo, e `WHERE razao_social = 'JOSE'`
+acha `José`. O dado gravado continua fiel à fonte.
 
-### Fazer Backup:
-```bash
-# Backup completo
-uv run src/auxiliary/python/dump_and_restore.py dump
+## Dados
 
-# Apenas estrutura
-uv run src/auxiliary/python/dump_and_restore.py model
+| tabela | linhas (2026-09) |
+|---|---:|
+| `estabelecimento` | 73.366.147 |
+| `empresa` | 70.085.591 |
+| `simples` | 50.396.768 |
+| `socios` | 28.341.092 |
 
-# Informações do banco
-uv run src/auxiliary/python/dump_and_restore.py info
-```
+Mais as tabelas de domínio: `cnae`, `municipio`, `natureza`, `pais`,
+`qualificacao`, `motivo`.
 
-### Restaurar Banco:
-```bash
-# Restaurar em outro ambiente
-uv run src/auxiliary/python/dump_and_restore.py restore arquivo_backup.dump
-```
+## Backup
 
-## ⚡ Performance e Otimizações
+Não há ferramenta própria: a base é reconstruída do zero a partir dos `.zip`
+todo mês, então a fonte **é** o backup. Para mover a base entre máquinas ou
+mudar o `page_size` (que só pode ser definido na criação), use o `gbak` do
+próprio Firebird.
 
-### Configurações Recomendadas PostgreSQL:
-```sql
--- Configurações para melhor performance
-SET work_mem = '1GB';
-SET maintenance_work_mem = '2GB';
-SET shared_buffers = '4GB';
-SET max_wal_size = '4GB';
-SET checkpoint_completion_target = 0.9;
-```
+## Origem dos dados
 
-### Índices Otimizados:
-- **CNPJs**: Busca por empresa/estabelecimento (~1-5ms)
-- **Situação**: Filtros por situação cadastral (~1-3s)
-- **Localização**: Consultas por município/UF (~500ms-2s)
-- **Atividade**: Filtros por CNAE (~1-5s)
+- Arquivos: `https://arquivos.receitafederal.gov.br/public.php/dav/files/YggdBLfdninEJX9/`
+- Catálogo: https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj
+- Layout: https://www.gov.br/receitafederal/dados/cnpj-metadados.pdf
 
-### Estatísticas:
-- **Tamanho do banco**: ~32GB
-- **Tempo de ETL**: 3-5 horas
-- **Tempo de índices**: 30-60 minutos
-- **Consultas otimizadas**: <100ms
+O layout oficial descreve os campos mas **não publica o tamanho de nenhum**. As
+larguras em [`src/db/schema.py`](src/db/schema.py) foram medidas sobre dezenas
+de milhões de linhas reais.
 
-## 🛠️ Configuração Avançada
+## Origem do projeto
 
-### Arquivo `.env`:
-```env
-# Configurações do banco
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=receita_federal
-DB_USER=postgres
-DB_PASSWORD=sua_senha
-
-# Configurações de performance
-CHUNK_SIZE=10000
-MAX_WORKERS=4
-TIMEOUT=3600
-
-# Configurações de rede
-DOWNLOAD_TIMEOUT=600
-MAX_RETRIES=3
-```
-
-### Recursos do Sistema:
-- **RAM mínima**: 8GB
-- **Espaço em disco**: 50GB livres
-- **CPU**: Multi-core recomendado
-- **Rede**: Conexão estável para downloads
-
-## 📋 Comandos Úteis
-
-### Verificar Estrutura:
-```bash
-# Verificar organização do projeto
-uv run check_structure.py
-```
-
-### Monitoramento:
-```bash
-# Acompanhar logs
-tail -f etl_log.log
-
-# Verificar status do banco
-uv run src/validation/check_database_status.py
-
-# Estatísticas detalhadas
-uv run src/auxiliary/python/dump_and_restore.py info
-```
-
-### Solução de Problemas:
-```bash
-# Retomar ETL interrompido
-uv run src/etl/resume_etl.py
-
-# Recriar índices
-uv run src/indexes/create_indexes.py
-
-# Verificar integridade
-psql -d receita_federal -c "SELECT COUNT(*) FROM empresa;"
-```
-
-## 🔧 Troubleshooting
-
-### Problemas Comuns:
-
-1. **Timeout na criação de índices**:
-   ```bash
-   # Use o script de retomada
-   uv run src/etl/resume_etl.py
-   ```
-
-2. **Memória insuficiente**:
-   ```sql
-   -- Ajustar configurações PostgreSQL
-   SET work_mem = '512MB';
-   SET maintenance_work_mem = '1GB';
-   ```
-
-3. **Erro de conexão**:
-   ```bash
-   # Verificar .env e PostgreSQL
-   psql -h localhost -p 5432 -U postgres -d receita_federal
-   ```
-
-4. **Espaço em disco**:
-   ```bash
-   # Verificar espaço disponível
-   df -h
-   
-   # Limpar arquivos temporários
-   rm -rf downloads/ temp/
-   ```
-
-## 📚 Documentação Completa
-
-- **[Processo ETL](src/etl/README.md)**: Detalhes do processo de extração, transformação e carga
-- **[Validação](src/validation/README.md)**: Verificação de integridade e qualidade dos dados
-- **[Índices](src/indexes/README.md)**: Otimização de performance e consultas
-- **[SQL](src/sql/README.md)**: Scripts SQL essenciais e configurações
-- **[Auxiliares](src/auxiliary/README.md)**: Scripts complementares e utilitários
-
-## 🌐 Fontes Oficiais
-
-- **[Dados Oficiais](https://dados.gov.br/dados/conjuntos-dados/cadastro-nacional-da-pessoa-juridica---cnpj)**: Fonte da Receita Federal
-- **[Layout dos Arquivos](https://www.gov.br/receitafederal/dados/cnpj-metadados.pdf)**: Documentação técnica oficial
-- **[Consulta Individual](https://solucoes.receita.fazenda.gov.br/servicos/cnpjreva/cnpjreva_solicitacao.asp)**: Consulta no site da Receita Federal
-
-## 🤝 Contribuição
-
-Contribuições são bem-vindas! Por favor:
-
-1. Faça fork do repositório
-2. Crie branch para sua feature (`git checkout -b feature/nova-funcionalidade`)
-3. Commit suas mudanças (`git commit -am 'Adicionar nova funcionalidade'`)
-4. Push para branch (`git push origin feature/nova-funcionalidade`)
-5. Abra Pull Request
-
-## 🙏 Créditos
-
-O CNPJ-XRay deriva do trabalho de:
-
-- [aphonsoar/Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ](https://github.com/aphonsoar/Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ) — projeto original
-- [fonsecach/dados-publicos-cnpj](https://github.com/fonsecach/dados-publicos-cnpj) — base direta deste fork
-
-## 📄 Licença
-
-Este projeto está sob a licença MIT, herdada dos projetos de origem. Veja o arquivo `LICENSE` para detalhes.
-
-## 🚨 Aviso Legal
-
-Este projeto processa dados públicos disponibilizados pela Receita Federal do Brasil. O uso dos dados deve respeitar os termos de uso estabelecidos pelo órgão oficial. Os desenvolvedores não se responsabilizam pelo uso inadequado das informações processadas.
-
-## 📞 Suporte
-
-Para problemas, sugestões ou dúvidas:
-- **Issues**: Abra uma issue no GitHub
-- **Documentação**: Consulte os READMEs específicos de cada módulo
+Fork de [fonsecach/dados-publicos-cnpj](https://github.com/fonsecach/dados-publicos-cnpj),
+por sua vez fork de
+[aphonsoar/Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ](https://github.com/aphonsoar/Receita_Federal_do_Brasil_-_Dados_Publicos_CNPJ).
+A mudança principal foi trocar o PostgreSQL pelo Firebird 3.0 e reescrever o
+ETL em torno disso.

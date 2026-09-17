@@ -1,314 +1,121 @@
-# 🚀 CNPJ-XRay - Guia de Configuração Inicial
+# CNPJ-XRay — Configuração inicial
 
-## ✅ Checklist Pré-Execução
+## 1. Firebird 3.0 rodando
 
-Antes de executar o ETL, siga este checklist:
+O projeto fala com um servidor Firebird 3.0 já instalado. Não há container nem
+setup embutido.
 
-### 1. ✅ Verificar PostgreSQL
+**Windows** — o instalador cria os serviços `FirebirdServerDefaultInstance` e
+`FirebirdGuardianDefaultInstance`:
 
-O banco PostgreSQL precisa estar rodando. Verifique:
-
-```bash
-# Verificar se PostgreSQL está rodando
-systemctl status postgresql
-
-# Ou, se estiver usando Docker:
-docker ps | grep postgres
-
-# Testar conectividade (ajuste a porta conforme seu ambiente)
-nc -zv localhost 5432
-# ou
-nc -zv localhost 5436
+```powershell
+Get-Service *Firebird* | Select-Object Name, Status
 ```
 
-**Se PostgreSQL NÃO estiver rodando:**
+**Linux**:
 
 ```bash
-# Iniciar PostgreSQL no sistema
-sudo systemctl start postgresql
-
-# Ou, se estiver usando Docker:
-docker start nome_do_container_postgres
+systemctl status firebird3.0
 ```
 
----
-
-### 2. ✅ Criar arquivo .env
-
-O arquivo `.env` JÁ FOI CRIADO para você, mas precisa ser configurado:
+Testar a porta:
 
 ```bash
-# Editar o arquivo .env
-nano .env
-# ou
-vim .env
-# ou
-code .env
+python -c "import socket; s=socket.create_connection(('localhost',3050),5); print('ok'); s.close()"
 ```
 
-**IMPORTANTE:** Altere as seguintes variáveis:
+Firebird 3.0 é requisito, não preferência: o projeto usa `RDB$DB_KEY` para
+remover chave repetida, `EXECUTE BLOCK` para carga em massa e o limite de 31
+caracteres para identificador está codificado no schema.
 
-#### a) Senha do PostgreSQL
-```bash
-DB_PASSWORD=sua_senha_aqui  # ← ALTERE AQUI
-```
-
-#### b) Porta do PostgreSQL
-Se seu PostgreSQL usa porta diferente de 5436, ajuste:
-```bash
-DB_PORT=5432  # ou 5436, ou a porta que você usa
-```
-
-#### c) Verificar se os caminhos estão corretos
-```bash
-OUTPUT_FILES_PATH=./dados/downloads      # ← Onde os ZIPs serão baixados
-EXTRACTED_FILES_PATH=./dados/extracted   # ← Onde os CSVs serão extraídos
-```
-
----
-
-### 3. ✅ Criar diretórios necessários
-
-Os diretórios são criados automaticamente pelo script, mas você pode criá-los manualmente:
+## 2. Arquivo `.env`
 
 ```bash
-# Criar diretórios de dados
-mkdir -p dados/downloads
-mkdir -p dados/extracted
-
-# Verificar
-ls -la dados/
-```
-
----
-
-### 4. ✅ Criar o banco de dados
-
-Se o banco `receita_federal` não existir, crie-o:
-
-```bash
-# Usando psql
-psql -U postgres -c "CREATE DATABASE receita_federal;"
-
-# Ou conectar primeiro e depois criar
-psql -U postgres
-# Dentro do psql:
-postgres=# CREATE DATABASE receita_federal;
-postgres=# \q
-```
-
-**Verificar se o banco foi criado:**
-```bash
-psql -U postgres -l | grep receita_federal
-```
-
----
-
-### 5. ✅ Testar conexão com o banco
-
-```bash
-# Testar conexão
-psql -U postgres -d receita_federal -c "SELECT version();"
-```
-
-Se conectar com sucesso, está tudo certo! ✅
-
----
-
-## 🎯 Executar o ETL
-
-Agora que tudo está configurado, execute o ETL:
-
-### Opção 1: Baixar versão mais recente (RECOMENDADO)
-```bash
-uv run src/etl/ETL_dados_publicos_empresas.py --last
-```
-
-### Opção 2: Modo interativo
-```bash
-uv run src/etl/ETL_dados_publicos_empresas.py
-```
-
-### Opção 3: Versão específica
-```bash
-uv run src/etl/ETL_dados_publicos_empresas.py 01-2026
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Erro: "Arquivo .env não encontrado"
-
-**Causa:** O arquivo `.env` não está no diretório raiz do projeto.
-
-**Solução:**
-```bash
-# Verificar se está no diretório correto
-pwd
-# Deve mostrar o diretório raiz do CNPJ-XRay
-
-# Verificar se .env existe
-ls -la .env
-
-# Se não existir, copiar do exemplo
 cp .env.example .env
-nano .env  # Editar com suas configurações
 ```
 
----
+| variável | o que é | exemplo |
+|---|---|---|
+| `DB_HOST` | host do servidor Firebird | `localhost` |
+| `DB_PORT` | porta | `3050` |
+| `DB_NAME` | caminho do `.fdb` **como o servidor o enxerga** | `C:/CNPJ-XRay/bd/cnpj_xray.fdb` |
+| `DB_USER` | usuário | `SYSDBA` |
+| `DB_PASSWORD` | senha | — |
+| `DB_CHARSET` | charset da conexão e do banco | `WIN1252` |
+| `DB_COLLATION` | collation padrão | `WIN_PTBR` |
+| `FB_CLIENT_LIBRARY` | caminho do `fbclient` | `C:/Program Files/Firebird/Firebird_3_0/fbclient.dll` |
+| `FB_PAGE_SIZE` | tamanho de página | `16384` |
+| `FB_CACHE_MB` | cache de páginas do banco, em MB | `2048` |
+| `OUTPUT_FILES_PATH` | raiz dos `.zip` baixados | `C:/CNPJ-XRay/Download` |
 
-### Erro: "expected str, bytes or os.PathLike object, not NoneType"
+Três detalhes que costumam morder:
 
-**Causa:** Variáveis `OUTPUT_FILES_PATH` ou `EXTRACTED_FILES_PATH` não configuradas no `.env`
+- **`DB_NAME` é o caminho que o SERVIDOR vê**, não o cliente. Se o Firebird
+  roda em container ou noutra máquina, use `FB_LOCAL_DATA_DIR` para dizer onde
+  *este* processo enxerga o mesmo arquivo — a troca blue-green renomeia
+  arquivos, e quem renomeia é o Python, não o servidor.
+- **`DB_CHARSET` e `DB_COLLATION` só valem na criação do banco.** Mudar depois
+  exige backup/restore com `gbak`. O mesmo vale para `FB_PAGE_SIZE`.
+- **O usuário do Firebird não fica no banco da aplicação.** Ele vive no
+  security database do servidor (`security3.fdb`, apontado por
+  `SecurityDatabase` no `firebird.conf`). Trocar senha é operação de
+  infraestrutura e vale para toda a instância.
 
-**Solução:**
-```bash
-# Editar .env e adicionar:
-nano .env
-
-# Adicione estas linhas:
-OUTPUT_FILES_PATH=./dados/downloads
-EXTRACTED_FILES_PATH=./dados/extracted
-```
-
----
-
-### Erro: "Connect call failed" ou "[Errno 111]"
-
-**Causa:** PostgreSQL não está rodando ou porta incorreta.
-
-**Soluções:**
-
-1. **Iniciar PostgreSQL:**
-   ```bash
-   sudo systemctl start postgresql
-   # ou
-   docker start postgres_container
-   ```
-
-2. **Verificar porta correta:**
-   ```bash
-   # Ver em qual porta o PostgreSQL está rodando
-   sudo netstat -tlnp | grep postgres
-   # ou
-   sudo ss -tlnp | grep postgres
-   ```
-   
-   Ajuste no `.env`:
-   ```bash
-   DB_PORT=5432  # ou a porta mostrada no comando acima
-   ```
-
-3. **Verificar senha:**
-   Certifique-se que a senha no `.env` está correta:
-   ```bash
-   DB_PASSWORD=sua_senha_real_aqui
-   ```
-
----
-
-### Erro: "database does not exist"
-
-**Causa:** Banco `receita_federal` não foi criado.
-
-**Solução:**
-```bash
-psql -U postgres -c "CREATE DATABASE receita_federal;"
-```
-
----
-
-## 📊 Verificar Configuração Completa
-
-Execute este script de verificação:
+## 3. Diretórios
 
 ```bash
-#!/bin/bash
-echo "🔍 Verificando configuração do ambiente..."
-echo ""
-
-# 1. Verificar .env
-echo "1. Arquivo .env:"
-if [ -f .env ]; then
-    echo "   ✅ .env existe"
-else
-    echo "   ❌ .env NÃO encontrado"
-    exit 1
-fi
-
-# 2. Verificar diretórios
-echo "2. Diretórios:"
-if [ -d dados/downloads ] && [ -d dados/extracted ]; then
-    echo "   ✅ Diretórios criados"
-else
-    echo "   ⚠️  Criando diretórios..."
-    mkdir -p dados/downloads dados/extracted
-fi
-
-# 3. Verificar PostgreSQL
-echo "3. PostgreSQL:"
-if systemctl is-active --quiet postgresql; then
-    echo "   ✅ PostgreSQL rodando"
-elif docker ps | grep -q postgres; then
-    echo "   ✅ PostgreSQL rodando (Docker)"
-else
-    echo "   ❌ PostgreSQL NÃO está rodando"
-    exit 1
-fi
-
-# 4. Testar conexão
-echo "4. Conexão com banco:"
-source .env
-if psql -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d postgres -c "SELECT 1" > /dev/null 2>&1; then
-    echo "   ✅ Conexão OK"
-else
-    echo "   ❌ Não foi possível conectar ao banco"
-    exit 1
-fi
-
-echo ""
-echo "✅ Tudo pronto! Pode executar o ETL."
+mkdir -p Download bd logs
 ```
 
-Salve como `check_config.sh`, dê permissão e execute:
-```bash
-chmod +x check_config.sh
-./check_config.sh
-```
+Espaço necessário: ~8 GB para os `.zip`, ~33 GB para a base nova, e a base
+atual continua no disco até a troca terminar. Reserve ~45 GB livres.
 
----
-
-## 📝 Resumo das Variáveis Obrigatórias
-
-No arquivo `.env`, estas variáveis SÃO OBRIGATÓRIAS:
+## 4. Dependências
 
 ```bash
-DB_HOST=localhost                        # Host do PostgreSQL
-DB_PORT=5432                            # Porta do PostgreSQL (5432 ou 5436)
-DB_NAME=receita_federal                 # Nome do banco
-DB_USER=postgres                        # Usuário do banco
-DB_PASSWORD=COLOQUE_SUA_SENHA_AQUI     # ← IMPORTANTE: Senha real
-DB_SSL_MODE=disable                     # disable para local, require para produção
-
-OUTPUT_FILES_PATH=./dados/downloads     # Onde baixar os ZIPs
-EXTRACTED_FILES_PATH=./dados/extracted  # Onde extrair os CSVs
+uv sync
 ```
 
----
-
-## 🎉 Pronto!
-
-Após seguir este guia, você estará pronto para executar o ETL com sucesso:
+## 5. Conferir a instalação
 
 ```bash
-uv run src/etl/ETL_dados_publicos_empresas.py --last
+uv run python -c "from dotenv import load_dotenv; load_dotenv(); from src.db import connection; print('banco existe:', connection.database_exists())"
 ```
 
-**Tempo estimado de execução:** 4-8 horas (dependendo da conexão e hardware)
-**Espaço em disco necessário:** ~100GB (compactado) + ~400GB (descompactado)
+`False` é o esperado antes da primeira carga — significa que o cliente falou
+com o servidor e o arquivo ainda não existe. Erro de conexão ou de credencial
+aparece como exceção.
 
----
+## 6. Primeira carga
 
-**Última atualização:** 2026-01-29  
-**Versão:** 2.2.0
+```bash
+uv run python -m src.etl.download
+```
+
+```bash
+uv run python -m src.etl.pipeline --origem ./Download --switch --processos 8
+```
+
+Cerca de 6 h em 8 processos. O pipeline valida antes de trocar: se a base nova
+não fechar o número de linhas ou vier com chave repetida acima do limiar, nada
+é promovido e a base anterior continua de pé.
+
+## Problemas comuns
+
+**`Your user name and password are not defined`** — o script não carregou o
+`.env`. Os pontos de entrada (`src.etl.pipeline`, `src.etl.download`,
+`src.consulta.empresa`) já chamam `load_dotenv()`; um script avulso precisa
+chamar também.
+
+**`Shared memory area is probably already created by another engine instance`**
+— a Services API do driver atinge um engine local em vez do serviço. O projeto
+já contorna isso caindo para o binário `gfix` (ver `src/db/gfix.py`); confirme
+que o `gfix` está ao lado do `fbclient` configurado ou no `PATH`.
+
+**`-104 Name longer than database column size`** — identificador acima de 31
+caracteres. O `schema.py` checa isso na importação do módulo justamente para o
+erro não aparecer só na hora do `CREATE TABLE`.
+
+**`attempted update on read-only database`** — é o comportamento esperado: a
+produção fica read-only no header. Para manutenção, use
+`connection.modo_leitura_escrita()` e devolva com `modo_somente_leitura()`.

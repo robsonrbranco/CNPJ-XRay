@@ -139,7 +139,7 @@ AND LENGTH(telefone_1) < 8;
 - [ ] Conexão com banco funcionando
 - [ ] Espaço em disco suficiente (>50GB)
 - [ ] Memória disponível (>8GB)
-- [ ] Configurações PostgreSQL adequadas
+- [ ] Firebird rodando e `FB_CLIENT_LIBRARY` apontando para o `fbclient`
 
 ### ✅ **Pós-ETL**
 - [ ] Todas as tabelas criadas

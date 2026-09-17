@@ -1,179 +1,99 @@
-# 🤖 CLAUDE.md - CNPJ-XRay (Sistema ETL)
+# CLAUDE.md — CNPJ-XRay
 
-## 📋 Resumo das Melhorias Implementadas
+Contexto para quem (ou o que) for trabalhar neste repositório.
 
-Este documento detalha as melhorias implementadas no sistema ETL de dados públicos do CNPJ para resolver problemas de conectividade, configuração e robustez do processo.
+## O que é
 
-## 🛠️ Melhorias Técnicas Implementadas
+ETL e consulta dos dados públicos de CNPJ da Receita Federal em **Firebird
+3.0**. Fork de `fonsecach/dados-publicos-cnpj`, que usava PostgreSQL; a
+migração para Firebird foi a mudança central e o código PostgreSQL foi
+removido, não mantido em paralelo.
 
-### 1. **Sistema de Seleção Dinâmica de Data** 🗓️
-- **Funcionalidade**: Múltiplos modos de seleção de ano/mês dos dados
-- **Implementação**: Função `get_year_month()` com suporte a argumentos CLI e validação robusta
-- **Modos de operação**:
-  - **Interativo** (padrão): Interface interativa para seleção manual
-  - **Automático** (`--last`): Detecta e baixa a versão mais recente disponível na Receita Federal
-  - **Específico** (`MM-AAAA`): Baixa uma versão específica via linha de comando
-- **Benefícios**:
-  - Usuário pode escolher qualquer mês/ano disponível (2019 - atual)
-  - Validação automática de entrada
-  - URL construída dinamicamente: `{ano}-{mes:02d}`
-  - Detecção automática da versão mais recente via scraping
-  - Suporte completo a automação via scripts e CI/CD
+## Quatro regras que sustentam o desenho
 
-### 2. **Tratamento Robusto de Conexões SSL/TLS** 🔐
-- **Problema Original**: Falhas de conexão com certificados SSL da Receita Federal
-- **Soluções Implementadas**:
-  - Configuração SSL permissiva (`ssl_context.verify_mode = ssl.CERT_NONE`)
-  - Retry automático com backoff exponencial
-  - User-Agent atualizado para simular navegador moderno
-  - Timeouts apropriados (30s requisições, 120s downloads)
-  - Tratamento específico de `ConnectError`, `TimeoutException` e `SSLError`
+Elas se apoiam mutuamente. Mexer numa sem entender as outras quebra o conjunto.
 
-### 3. **Sistema de Recuperação de Falhas** ⚡
-- **Função `get_html_with_retry()`**: Até 3 tentativas para acessar página principal
-- **Downloads assíncronos robustos**: Configuração SSL e limites de conexão otimizados
-- **Logs detalhados**: Identificação precisa de pontos de falha
+1. **Firebird 3.0 é requisito fixo**, não preferência. Não propor 4.0/5.0 —
+   mesmo a batch API do 4.0, que seria relevante para carga em massa, foi
+   descartada explicitamente.
+2. **Produção é base de CONSULTA.** Usuário nunca altera dado. O banco fica
+   `read-only` no header — não é combinado operacional, é o engine recusando
+   escrita.
+3. **Nunca há atualização incremental.** Cada competência constrói uma base
+   nova do zero em `_staging.fdb` e entra em produção pela troca de arquivo.
+   `UPDATE OR INSERT` foi implementado e descartado por causa disso.
+4. **A carga é otimista, sem nenhuma trava.** Sem PRIMARY KEY, NOT NULL ou
+   FOREIGN KEY. Índices existem só para performance de consulta, nunca como
+   constraint, e são criados depois da carga.
 
-### 4. **Correção de Configurações do Ambiente** ⚙️
-- **Variáveis adicionadas ao .env**:
-  - `OUTPUT_FILES_PATH=./dados/downloads`
-  - `EXTRACTED_FILES_PATH=./dados/extracted`
-- **Problema resolvido**: Erro de diretórios `NoneType` durante extração
+A razão da regra 4 é empírica: os dados da Receita têm código órfão e chave
+repetida **reais** — `08314885` aparece duas vezes em `empresa` na fonte. Uma
+constraint transformaria isso em exceção no meio de 222 milhões de INSERTs.
+A conferência acontece depois, em `src/validation/qualidade.py`, medindo o
+estrago em vez de abortar por causa dele.
 
-### 5. **Melhorias na Função `check_diff()`** 📁
-- Aplicação das mesmas configurações SSL robustas
-- Tratamento de exceções para verificação de arquivos
-- Fallback seguro em caso de erro (força download)
+## Mapa do código
 
-## 🚀 Comandos de Teste e Validação
+| módulo | papel |
+|---|---|
+| `src/db/schema.py` | **fonte da verdade**: tabelas, larguras, índices, chaves naturais |
+| `src/db/connection.py` | criação do banco, modos de carga/produção/read-only |
+| `src/db/loader.py` | carga em massa com statement reaproveitado |
+| `src/db/dedup.py` | remoção de chave repetida da fonte via `RDB$DB_KEY` |
+| `src/db/gfix.py` | contorno para a Services API do driver |
+| `src/etl/download.py` | download multipart, paralelo, com espera pela origem |
+| `src/etl/leitura.py` | lê blocos direto do `.zip`, em cp1252 |
+| `src/etl/carga.py` | fatia o trabalho entre processos |
+| `src/etl/pipeline.py` | as 11 fases da construção |
+| `src/blue_green/` | validação, troca de arquivo e modos de acesso |
+| `src/consulta/empresa.py` | ficha de empresa por CNPJ |
 
-### Testar Conectividade com Banco
+## Comandos
+
 ```bash
-nc -zv localhost 5436
+uv run python -m src.etl.download --competencia 2026-09
 ```
 
-### Verificar Status dos Containers
 ```bash
-docker ps | grep postgres
+uv run python -m src.etl.pipeline --origem ./Download --switch --processos 8
 ```
 
-### Executar ETL
-
-**Modo Interativo (padrão):**
 ```bash
-uv run src/etl/ETL_dados_publicos_empresas.py
+uv run python -m src.consulta.empresa 08314885
 ```
 
-**Baixar a versão mais recente automaticamente:**
 ```bash
-uv run src/etl/ETL_dados_publicos_empresas.py --last
+uv run python -m src.validation.qualidade --producao
 ```
 
-**Baixar uma versão específica:**
-```bash
-# Formato: MM-AAAA
-uv run src/etl/ETL_dados_publicos_empresas.py 01-2025
-uv run src/etl/ETL_dados_publicos_empresas.py 12-2024
-```
+## Armadilhas já pagas
 
-**Ver ajuda e exemplos:**
-```bash
-uv run src/etl/ETL_dados_publicos_empresas.py --help
-```
+- **Encoding é cp1252, não latin-1.** Os dois divergem justamente em
+  0x80–0x9F. Ler como latin-1 e gravar como WIN1252 quebra com
+  `UnicodeEncodeError`. `leitura.py` lê cp1252 e traduz os 5 bytes que cp1252
+  não define (`0x81 0x8D 0x8F 0x90 0x9D`) para `?`.
+- **`complemento` contém `;` dentro de valor entre aspas.** Split ingênuo por
+  `;` corrompe ~5% de `estabelecimento`.
+- **O layout oficial não publica tamanho de campo nenhum.** As larguras foram
+  medidas sobre dezenas de milhões de linhas reais.
+- **Identificador tem limite de 31 caracteres** no Firebird 3.0. O
+  `schema.py` checa na importação do módulo.
+- **`EXECUTE BLOCK` tem limite de 256 contextos.** `INSERT` gasta 1 por
+  instrução (256 por bloco), `UPDATE OR INSERT` gasta 3 (85 por bloco).
+- **Paralelismo tem que ser por processo, não por thread** — as threads passam
+  o tempo em Python e disputam o GIL. Por processo dá 4,7x.
+- **A Services API do driver falha neste ambiente**; o projeto cai para o
+  binário `gfix`.
+- **`page_size` não muda o tamanho final da base.** Medido: 1,4 MB de
+  diferença em 190 MB entre 4K, 8K e 16K, porque página de dado e página de
+  índice reagem em direções opostas. Ver o comentário em `src/db/config.py`.
+- **O servidor da Receita oscila muito** — cai e volta dezenas de vezes por
+  hora, aceitando conexão e parando de entregar bytes sem fechar o socket.
+  `download.py` trata isso; cliente ingênuo fica pendurado para sempre.
 
-## 📊 Impacto das Melhorias
+## Ao medir performance
 
-### Antes das Melhorias:
-- ❌ Falhas SSL frequentes
-- ❌ Downloads interrompidos (0/37 arquivos)
-- ❌ Extrações falhando por variáveis `None`
-- ❌ Erro de conexão com banco (`Connection reset by peer`)
-
-### Depois das Melhorias:
-- ✅ Conexões SSL robustas com retry automático
-- ✅ Downloads funcionando com configuração otimizada
-- ✅ Extrações funcionais com caminhos corretos
-- ✅ Seleção interativa, automática ou via CLI de ano/mês
-- ✅ Detecção automática da versão mais recente (`--last`)
-- ✅ Suporte a automação via argumentos de linha de comando
-- ✅ Tratamento gracioso de erros com mensagens informativas
-
-## 🔧 Configuração Recomendada
-
-### Arquivo .env (variáveis obrigatórias):
-```bash
-# BANCO DE DADOS
-DB_HOST=localhost
-DB_PORT=5436
-DB_NAME=receita_federal
-DB_USER=postgres
-DB_PASSWORD=sua_senha
-
-# CAMINHOS OBRIGATÓRIOS
-OUTPUT_FILES_PATH=./dados/downloads
-EXTRACTED_FILES_PATH=./dados/extracted
-```
-
-## 🐛 Troubleshooting
-
-### Se ainda encontrar problemas SSL:
-1. Verifique conectividade: `curl -I https://arquivos.receitafederal.gov.br`
-2. Confirme data/hora do sistema
-3. Execute com logs detalhados
-
-### Se downloads falharem:
-1. Verifique espaço em disco
-2. Confirme permissões nos diretórios de destino
-3. Teste conectividade de rede
-
-### Se banco não conectar:
-1. Confirme que PostgreSQL está rodando: `docker ps | grep postgres`
-2. Teste conectividade: `nc -zv localhost 5436`
-3. Verifique credenciais no .env
-
-## 📝 Notas de Desenvolvimento
-
-- **Python 3.13**: Compatibilidade total testada
-- **Bibliotecas principais**: `httpx`, `asyncpg`, `pandas`, `rich`
-- **Padrão de SSL**: Permissivo para contornar limitações dos servidores governamentais
-- **Logs**: Rich console com formatação colorida e progress bars
-
-## 🎯 Casos de Uso
-
-### 1. Automação em Cron/Scheduler
-Para baixar automaticamente a versão mais recente todo mês:
-```bash
-# Crontab: Todo dia 5 do mês às 2h da manhã
-0 2 5 * * cd /path/to/projeto && uv run src/etl/ETL_dados_publicos_empresas.py --last
-```
-
-### 2. CI/CD Pipeline
-```yaml
-# GitHub Actions / GitLab CI
-- name: Download CNPJ Data
-  run: |
-    uv run src/etl/ETL_dados_publicos_empresas.py --last
-```
-
-### 3. Análise Histórica
-Para comparar dados de períodos específicos:
-```bash
-# Baixar dados de janeiro de 2025
-uv run src/etl/ETL_dados_publicos_empresas.py 01-2025
-
-# Baixar dados de dezembro de 2024
-uv run src/etl/ETL_dados_publicos_empresas.py 12-2024
-```
-
-### 4. Desenvolvimento e Testes
-Para testes locais com versões específicas:
-```bash
-# Modo interativo permite escolha manual
-uv run src/etl/ETL_dados_publicos_empresas.py
-```
-
----
-
-**🤖 Gerado com Claude Code**  
-Data: 2026-01-29  
-Versão: ETL v2.2 com argumentos CLI e detecção automática
+Confirmar com um sinal que não venha do mesmo cronômetro, e checar se os dois
+braços de uma comparação medem o mesmo escopo. Já houve quatro conclusões
+erradas neste projeto por medir uma coisa e afirmar outra — tempo dentro de uma
+chamada não é tempo gasto por ela, e probe num caminho não decide sobre outro.

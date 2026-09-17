@@ -242,6 +242,16 @@ INDEXES: dict[str, tuple[str, ...]] = {
     "simples_cnpj": ("simples", "cnpj_basico"),
     "estabelecimento_situacao": ("estabelecimento", "situacao_cadastral"),
     "estabelecimento_municipio": ("estabelecimento", "municipio"),
+    # Recorte geográfico e faixa de capital são os dois filtros analíticos que
+    # ainda varriam a tabela inteira: 73 M linhas em `estabelecimento` e 70 M em
+    # `empresa`. `uf` tem só 27 valores distintos, então o índice não é seletivo
+    # sozinho — serve porque o Firebird cruza bitmaps de vários índices, e
+    # combinado com `estabelecimento_situacao` ou `estabelecimento_municipio`
+    # troca a varredura completa por interseção. `capital_social` é o oposto:
+    # coluna numérica quase única, onde o índice serve principalmente para
+    # consulta por faixa e para ORDER BY sem sort.
+    "estabelecimento_uf": ("estabelecimento", "uf"),
+    "empresa_capital_social": ("empresa", "capital_social"),
     # Domínio por código. Enquanto as tabelas de domínio tinham PRIMARY KEY,
     # o índice vinha de graça junto com ela; ao remover as travas da carga o
     # índice foi junto, e sem ele todo JOIN de domínio vira varredura completa
