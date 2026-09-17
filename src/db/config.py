@@ -7,6 +7,26 @@ from pathlib import Path, PurePosixPath
 # Firebird 3.0 aceita no máximo 16 KB de página (32 KB só a partir do 4.0).
 # Página grande reduz profundidade de índice e melhora leitura sequencial, que
 # é o perfil desta base.
+#
+# Medido em 2026-09-17, mesmas 1.655.969 linhas reais em cada braço, com
+# USE_FULL e os índices do projeto (o script está descrito no PR):
+#
+#     page_size   dados    índices   total     vs menor
+#      4.096    172,9 MB   19,0 MB   191,9 MB   +0,8%
+#      8.192    171,0 MB   19,4 MB   190,5 MB      —
+#     16.384    170,9 MB   19,8 MB   190,7 MB   +0,1%
+#
+# Ou seja: **page_size praticamente não afeta o tamanho final**. Os dois
+# componentes andam em direções opostas e quase se cancelam — página pequena
+# multiplica o cabeçalho fixo de cada página de dado, e página grande desperdiça
+# mais no resto de cada nó de índice parcialmente cheio. A diferença entre o
+# melhor e o pior é 1,4 MB em 190 MB; nos 33 GB da base seriam ~33 MB entre
+# 16 KB e 8 KB, e 4 KB (a escolha intuitiva de quem quer arquivo menor) é a
+# PIOR das três.
+#
+# Como espaço é indiferente, o critério de escolha volta a ser profundidade de
+# índice e leitura sequencial — e aí 16 KB ganha. Não trocar sem uma razão nova:
+# page_size só pode ser definido na criação, mudar exige backup/restore com gbak.
 DEFAULT_PAGE_SIZE = 16384
 
 # Quanto maior o batch, menos idas ao servidor — mas cada batch vira uma lista
