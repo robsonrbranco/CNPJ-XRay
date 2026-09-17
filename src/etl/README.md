@@ -1,169 +1,71 @@
-# 🔄 ETL - Extract, Transform, Load
+# ETL
 
-Scripts para o processo completo de ETL dos dados públicos da Receita Federal.
+Do `.zip` publicado pela Receita até a base Firebird em produção.
 
-## 📋 Arquivos
+## Módulos
 
-### 🎯 `ETL_dados_publicos_empresas.py`
-**Script principal do processo ETL**
+| arquivo | papel |
+|---|---|
+| `download.py` | baixa uma competência do compartilhamento WebDAV da Receita |
+| `leitura.py` | lê blocos de CSV direto de dentro do `.zip`, sem extrair |
+| `carga.py` | mapeia arquivo → tabela e fatia o trabalho entre processos |
+| `pipeline.py` | orquestra as 11 fases da construção |
 
-**Funcionalidades:**
-- Download automático dos arquivos da Receita Federal
-- Extração de arquivos ZIP
-- Transformação e limpeza dos dados
-- Carregamento no banco PostgreSQL
-- Processamento assíncrono para performance
+## Download
 
-**Uso:**
 ```bash
-# Executar ETL completo
-python src/etl/ETL_dados_publicos_empresas.py
-
-# Com ambiente virtual
-uv run src/etl/ETL_dados_publicos_empresas.py
+uv run python -m src.etl.download --listar
+uv run python -m src.etl.download --competencia 2026-09
+uv run python -m src.etl.download --conexoes 4 --aguardar 180
 ```
 
-**Configuração:**
-Arquivo `.env` na raiz do projeto:
-```env
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=receita_federal
-DB_USER=postgres
-DB_PASSWORD=sua_senha
-```
+Multipart em faixas de 64 MB, com a fila de pedaços **global** — não uma
+conexão por arquivo. Isso importa porque os arquivos são desiguais:
+`Estabelecimentos0.zip` tem 2,24 GB e os de domínio têm 1 KB; por arquivo, o
+fim do download viraria uma conexão só arrastando o gigante.
 
-### 🔄 `resume_etl.py`
-**Script para retomar ETL interrompido**
+O servidor da Receita oscila: aceita a conexão, entrega alguns MB e para de
+mandar byte **sem fechar o socket**. Por isso há timeout de socket, 6 tentativas
+retomando de onde parou, e — quando a origem inteira cai — espera pela volta em
+vez de gastar tentativa. Cada arquivo é conferido byte a byte contra o manifesto
+WebDAV e tem o diretório central do zip lido.
 
-**Funcionalidades:**
-- Verifica estado atual do banco
-- Retoma processo de onde parou
-- Foca na criação de índices (parte que mais falha)
-- Validação de integridade
+Medido: a banda satura em ~7 MB/s a partir de 2 conexões; passar de 4 não compra
+nada.
 
-**Uso:**
+## Leitura
+
+Os CSV são lidos em blocos de 32 MB de dentro do `.zip`, sem passar por disco.
+Duas coisas que quebram parser ingênuo:
+
+- **cp1252, não latin-1.** Os dois divergem em 0x80–0x9F. Os 5 bytes que cp1252
+  não define são traduzidos para `?`.
+- **`complemento` contém `;` entre aspas** (`"BLOCO: 01; APT: 144;"`). O corte
+  de bloco respeita paridade de aspas, senão ~5% de `estabelecimento` sai com o
+  número errado de campos.
+
+Tudo sai como texto; a conversão de tipo é do `db.loader`, derivada do schema —
+deixar o parser adivinhar levaria a decisões diferentes bloco a bloco.
+
+## Pipeline
+
 ```bash
-# Retomar ETL
-python src/etl/resume_etl.py
-
-# Com ambiente virtual
-uv run src/etl/resume_etl.py
+uv run python -m src.etl.pipeline --origem ./Download --switch --processos 8
 ```
 
-## 🔍 Processo ETL Detalhado
+| flag | efeito |
+|---|---|
+| `--origem` | raiz dos `.zip`; apontando para a raiz, pega a competência mais recente |
+| `--switch` | promove a base nova para produção ao final |
+| `--continuar` | retoma pelo `checkpoint.json` |
+| `--processos` | processos paralelos de carga |
 
-### 1. **Extract (Extração)**
-- Download dos arquivos ZIP da Receita Federal
-- Verificação de integridade dos arquivos
-- Extração dos arquivos CSV
+As 11 fases: base nova → modo carga → tabelas sem trava → carga em N processos →
+índices → remoção de chave repetida da fonte → estatísticas → modo produção →
+validação → troca → read-only.
 
-### 2. **Transform (Transformação)**
-- Limpeza de dados
-- Conversão de tipos
-- Tratamento de encoding
-- Processamento em chunks para otimização
+Paralelismo é por **processo**, não thread: as threads passam o tempo em Python
+montando tuplas e disputam o GIL. Por processo, 4,7x.
 
-### 3. **Load (Carregamento)**
-- Criação das tabelas
-- Inserção assíncrona dos dados
-- Criação de índices (opcional)
-- Validação final
-
-## 📊 Dados Processados
-
-### Tabelas Principais:
-- **`empresa`**: Dados básicos das empresas (~63M registros)
-- **`estabelecimento`**: Estabelecimentos/filiais (~66M registros)
-- **`socios`**: Sócios e representantes (~26M registros)
-- **`simples`**: Regime tributário Simples Nacional (~44M registros)
-
-### Tabelas de Referência:
-- **`cnae`**: Códigos de atividade econômica
-- **`natureza`**: Naturezas jurídicas
-- **`municipio`**: Códigos dos municípios
-- **`pais`**: Códigos dos países
-- **`qualificacao`**: Qualificações de sócios
-- **`motivo`**: Motivos de situação cadastral
-
-## ⚡ Performance
-
-### Otimizações Implementadas:
-- **Processamento assíncrono**: Múltiplas operações simultâneas
-- **Chunking**: Processamento em lotes
-- **Índices eficientes**: Criação posterior aos dados
-- **Conexão pooling**: Reutilização de conexões
-
-### Tempo Estimado:
-- **Download**: 5-10 minutos
-- **Extração**: 5-10 minutos
-- **Processamento**: 2-4 horas
-- **Índices**: 30-60 minutos
-- **Total**: 3-5 horas (dependendo do hardware)
-
-## 🚨 Troubleshooting
-
-### Problemas Comuns:
-
-1. **Timeout na criação de índices:**
-   ```bash
-   # Use o script de retomada
-   python src/etl/resume_etl.py
-   ```
-
-2. **Memória insuficiente:**
-   ```bash
-   # Aumentar configurações PostgreSQL
-   # work_mem = 1GB
-   # maintenance_work_mem = 2GB
-   ```
-
-3. **Erro de conexão:**
-   ```bash
-   # Verificar .env
-   # Testar conexão: psql -h localhost -p 5432 -U postgres -d receita_federal
-   ```
-
-4. **Arquivo corrompido:**
-   ```bash
-   # Deletar arquivos de download e rodar novamente
-   rm -rf downloads/
-   python src/etl/ETL_dados_publicos_empresas.py
-   ```
-
-## 📈 Monitoramento
-
-### Logs:
-- Arquivo: `etl_log.log`
-- Nível: INFO, ERROR
-- Rotação automática por tamanho
-
-### Métricas:
-- Total de registros processados
-- Tempo de execução por fase
-- Uso de memória
-- Erros e warnings
-
-## 🔧 Configuração Avançada
-
-### PostgreSQL:
-```sql
--- Configurações recomendadas no postgresql.conf
-shared_buffers = 4GB
-work_mem = 1GB
-maintenance_work_mem = 2GB
-max_wal_size = 4GB
-checkpoint_completion_target = 0.9
-```
-
-### Sistema:
-```bash
-# Aumentar limites de arquivo
-ulimit -n 65536
-
-# Verificar espaço em disco (mínimo 50GB)
-df -h
-
-# Verificar memória disponível (mínimo 8GB)
-free -h
-```
+Referência de tempo (2026-09, 8 processos, 222 M linhas): 310 min de carga mais
+45 min de índices, dedup, estatísticas e troca.
