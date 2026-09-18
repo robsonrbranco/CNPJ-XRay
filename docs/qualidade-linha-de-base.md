@@ -102,7 +102,7 @@ um relatório; carregar com trava custa a carga inteira.
 ## Como reproduzir
 
 ```bash
-uv run python -m src.validation.qualidade --producao
+python -m src.validation.qualidade --producao
 ```
 
 Se virar rotina mensal, vale rodar **logo depois da carga**, não dias depois: a

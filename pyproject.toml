@@ -3,7 +3,14 @@ name = "cnpj-xray"
 version = "0.1.0"
 description = "CNPJ-XRay - ETL e análise dos dados públicos de CNPJ da Receita Federal do Brasil"
 readme = "README.md"
-requires-python = "==3.13.*"
+# `==3.13.*` excluía justamente o interpretador em que o projeto roda: a máquina
+# de desenvolvimento está em 3.14, e a carga de 222 milhões de linhas, os testes
+# e a base em produção foram todos feitos nele. A restrição estava mentindo.
+#
+# O piso continua em 3.13 porque é contra ele que o projeto foi escrito; eu só
+# verifiquei 3.14, então ampliar para cima é afirmação que posso sustentar,
+# baixar o piso não seria.
+requires-python = ">=3.13"
 dependencies = [
     "firebird-driver>=2.0.0",
     "python-dotenv>=1.0.0",

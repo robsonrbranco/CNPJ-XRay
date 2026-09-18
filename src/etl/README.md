@@ -14,9 +14,9 @@ Do `.zip` publicado pela Receita até a base Firebird em produção.
 ## Download
 
 ```bash
-uv run python -m src.etl.download --listar
-uv run python -m src.etl.download --competencia 2026-09
-uv run python -m src.etl.download --conexoes 4 --aguardar 180
+python -m src.etl.download --listar
+python -m src.etl.download --competencia 2026-09
+python -m src.etl.download --conexoes 4 --aguardar 180
 ```
 
 Multipart em faixas de 64 MB, com a fila de pedaços **global** — não uma
@@ -50,7 +50,7 @@ deixar o parser adivinhar levaria a decisões diferentes bloco a bloco.
 ## Pipeline
 
 ```bash
-uv run python -m src.etl.pipeline --origem ./Download --switch --processos 8
+python -m src.etl.pipeline --origem ./Download --switch --processos 8
 ```
 
 | flag | efeito |

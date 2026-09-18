@@ -21,7 +21,7 @@ Scripts para validar e verificar a integridade dos dados da Receita Federal.
 python src/validation/check_database_status.py
 
 # Com ambiente virtual
-uv run src/validation/check_database_status.py
+python -m src.validation.qualidade
 ```
 
 ## 📊 Validações Executadas
