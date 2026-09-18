@@ -4,16 +4,24 @@ services:
     container_name: cnpj_xray_firebird
     environment:
       FIREBIRD_ROOT_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD nao configurado no .env}
-      # Cria o banco no primeiro start, ja com pagina de 16 KB e UTF8.
-      # page_size so pode ser definido na criacao -- mudar depois exige gbak.
-      FIREBIRD_DATABASE: cnpj_xray.fdb
-      FIREBIRD_DATABASE_PAGE_SIZE: "16384"
-      FIREBIRD_DATABASE_DEFAULT_CHARSET: UTF8
+
+      # O container NAO cria o banco. Isso e deliberado.
+      #
+      # As variaveis FIREBIRD_DATABASE* criariam cnpj_xray.fdb no primeiro
+      # start, mas nao expoem a COLLATION padrao -- e ela so pode ser definida
+      # na criacao. O banco nasceria sem WIN_PTBR, e `ORDER BY razao_social`
+      # jogaria todo nome acentuado para depois do Z, sem conserto que nao
+      # passe por backup/restore com gbak.
+      #
+      # Quem cria e src/db/connection.py:create_if_not_exists(), que emite o
+      # DDL literal com charset E collation, e logo em seguida desliga a
+      # reserva de espaco das paginas. Deixar o container criar antes faria o
+      # ETL encontrar um banco pronto e errado.
 
       # --- tuning de carga (vira firebird.conf dentro do container) ---
-      # Cache de paginas do servidor. 262144 paginas x 16 KB = 4 GB.
-      # Ajuste conforme a RAM da maquina; ver docs/carga-firebird.md.
-      FIREBIRD_CONF_DefaultDbCachePages: "${FB_CACHE_PAGES:-262144}"
+      # Cache de paginas do servidor. 131072 paginas x 16 KB = 2 GB.
+      # Ajuste conforme a RAM da maquina.
+      FIREBIRD_CONF_DefaultDbCachePages: "${FB_CACHE_PAGES:-131072}"
       # Sem varredura automatica durante a carga: o sweep competiria por I/O
       # com o ETL. Roda manualmente depois.
       FIREBIRD_CONF_SweepInterval: "0"
@@ -26,13 +34,12 @@ services:
       - "${DB_PORT:-3050}:3050"
     volumes:
       - firebird_data:/var/lib/firebird/data
-      # Os arquivos da Receita, visiveis ao servidor. So e necessario se algum
-      # dia a carga voltar a usar EXTERNAL TABLE; para o ETL atual o cliente
-      # le os arquivos e o servidor nao precisa enxerga-los.
-      - ./Download:/data/download:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "/usr/local/firebird/bin/isql -u SYSDBA -p $$FIREBIRD_ROOT_PASSWORD -q -e 'SELECT 1 FROM RDB$$DATABASE;' /var/lib/firebird/data/cnpj_xray.fdb || exit 1"]
+      # Checa o engine, nao o banco da aplicacao: no primeiro start o
+      # cnpj_xray.fdb ainda nao existe, e um healthcheck que o exigisse
+      # deixaria o container unhealthy ate a primeira carga terminar.
+      test: ["CMD-SHELL", "/usr/local/firebird/bin/isql -u SYSDBA -p $$FIREBIRD_ROOT_PASSWORD -q -e 'SELECT 1 FROM RDB$$DATABASE;' employee || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -41,3 +48,12 @@ services:
 volumes:
   firebird_data:
     driver: local
+
+# Usando este compose, ajuste o .env:
+#
+#   DB_NAME=/var/lib/firebird/data/cnpj_xray.fdb   # caminho que o SERVIDOR ve
+#   FB_LOCAL_DATA_DIR=<pasta do volume no host>    # onde o Python ve o arquivo
+#
+# FB_LOCAL_DATA_DIR e obrigatorio aqui: a troca blue-green renomeia arquivos, e
+# quem renomeia e o processo Python, nao o servidor. Sem essa ponte, a troca
+# procura o .fdb num caminho que so existe dentro do container.
