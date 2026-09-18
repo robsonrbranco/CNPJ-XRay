@@ -1,5 +1,14 @@
 # Migração ETL: pandas → Polars — Especificação
 
+> **Concluído.** A migração de pandas para Polars foi entregue: `src/db/loader.py`
+> e `src/etl/leitura.py` usam Polars hoje.
+>
+> O documento descreve o destino como `asyncpg.copy_records_to_table` em
+> PostgreSQL; o projeto migrou para Firebird 3.0 na versão 3.0.0, e a gravação
+> passou a ser `EXECUTE BLOCK` com statement reaproveitado. A parte sobre
+> Polars continua valendo; a parte sobre o destino, não. Os comandos citados
+> não funcionam mais. Fica como registro do desenho original.
+
 ## Problem Statement
 
 O ETL (`src/etl/ETL_dados_publicos_empresas.py`) usa pandas para ler e transformar os CSVs da
