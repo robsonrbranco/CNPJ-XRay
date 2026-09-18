@@ -162,3 +162,7 @@ bd/
 # Estado do blue-green: runtime por maquina, recriado pelo StateManager
 blue_green_state.json
 checkpoint.json
+
+# Artefatos de execucao: log do ETL, saida de gstat, relatorio de qualidade.
+# O diretorio inteiro, nao so *.log -- gstat e gbak escrevem .txt e .fbk.
+logs/
