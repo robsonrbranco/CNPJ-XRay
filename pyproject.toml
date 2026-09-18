@@ -17,3 +17,16 @@ dependencies = [
 #
 # "pathlib" também saiu: era dependência de um pacote do PyPI homônimo, um
 # backport abandonado que sombreia o módulo da stdlib.
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Os testes nao tocam em Firebird nem em rede: a troca blue-green e renomeacao
+# de arquivo, e a leitura opera sobre bytes. Rodam em menos de um segundo, o
+# que so vale dizer porque a alternativa para validar este codigo era uma carga
+# de seis horas.
+addopts = "-q"
