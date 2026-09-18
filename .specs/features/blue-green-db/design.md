@@ -1,5 +1,16 @@
 # Blue-Green Database — Design
 
+> **Concluído e superado.** Esta especificação foi escrita para o projeto sobre
+> **PostgreSQL**, e descreve a troca blue-green como `ALTER DATABASE ... RENAME`
+> entre os bancos `receita_federal` e `receita_federal_staging`. A feature foi
+> entregue, mas o projeto migrou para Firebird 3.0 na versão 3.0.0 e a troca
+> passou a ser **renomeação de arquivo** — ver `src/blue_green/switch.py`.
+>
+> Os comandos citados aqui (`uv run`, `ETL_dados_publicos_empresas.py`) não
+> funcionam mais. O documento fica como registro do desenho original, não como
+> instrução. Para o comportamento atual, ver o código e seus testes em
+> `tests/test_switch.py`.
+
 **Spec**: `.specs/features/blue-green-db/spec.md`
 **Status**: Draft
 

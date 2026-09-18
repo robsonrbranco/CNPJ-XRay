@@ -1,5 +1,14 @@
 # Migração ETL: pandas → Polars — Design
 
+> **Concluído.** A migração de pandas para Polars foi entregue: `src/db/loader.py`
+> e `src/etl/leitura.py` usam Polars hoje.
+>
+> O documento descreve o destino como `asyncpg.copy_records_to_table` em
+> PostgreSQL; o projeto migrou para Firebird 3.0 na versão 3.0.0, e a gravação
+> passou a ser `EXECUTE BLOCK` com statement reaproveitado. A parte sobre
+> Polars continua valendo; a parte sobre o destino, não. Os comandos citados
+> não funcionam mais. Fica como registro do desenho original.
+
 **Spec**: `.specs/features/etl-polars-migration/spec.md`
 **Status**: Draft
 
