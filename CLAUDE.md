@@ -51,19 +51,19 @@ estrago em vez de abortar por causa dele.
 ## Comandos
 
 ```bash
-uv run python -m src.etl.download --competencia 2026-09
+python -m src.etl.download --competencia 2026-09
 ```
 
 ```bash
-uv run python -m src.etl.pipeline --origem ./Download --switch --processos 8
+python -m src.etl.pipeline --origem ./Download --switch --processos 8
 ```
 
 ```bash
-uv run python -m src.consulta.empresa 08314885
+python -m src.consulta.empresa 08314885
 ```
 
 ```bash
-uv run python -m src.validation.qualidade --producao
+python -m src.validation.qualidade --producao
 ```
 
 ## Armadilhas já pagas

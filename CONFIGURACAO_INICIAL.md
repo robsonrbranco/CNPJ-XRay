@@ -73,13 +73,24 @@ atual continua no disco até a troca terminar. Reserve ~45 GB livres.
 ## 4. Dependências
 
 ```bash
-uv sync
+python -m venv .venv
+```
+
+```bash
+.venv\Scripts\activate          # Windows;  no Linux: source .venv/bin/activate
+python -m pip install -e .
+```
+
+Para rodar os testes, instale também o grupo de desenvolvimento:
+
+```bash
+python -m pip install pytest
 ```
 
 ## 5. Conferir a instalação
 
 ```bash
-uv run python -c "from dotenv import load_dotenv; load_dotenv(); from src.db import connection; print('banco existe:', connection.database_exists())"
+python -c "from dotenv import load_dotenv; load_dotenv(); from src.db import connection; print('banco existe:', connection.database_exists())"
 ```
 
 `False` é o esperado antes da primeira carga — significa que o cliente falou
@@ -89,11 +100,11 @@ aparece como exceção.
 ## 6. Primeira carga
 
 ```bash
-uv run python -m src.etl.download
+python -m src.etl.download
 ```
 
 ```bash
-uv run python -m src.etl.pipeline --origem ./Download --switch --processos 8
+python -m src.etl.pipeline --origem ./Download --switch --processos 8
 ```
 
 Cerca de 6 h em 8 processos. O pipeline valida antes de trocar: se a base nova

@@ -47,7 +47,12 @@ src/
 ```bash
 git clone https://github.com/robsonrbranco/CNPJ-XRay.git
 cd CNPJ-XRay
-uv sync
+python -m venv .venv
+```
+
+```bash
+.venv\Scripts\activate          # Windows;  no Linux: source .venv/bin/activate
+python -m pip install -e .
 cp .env.example .env
 ```
 
@@ -58,11 +63,11 @@ Ver [CONFIGURACAO_INICIAL.md](CONFIGURACAO_INICIAL.md) para o `.env`.
 ### Baixar uma competência
 
 ```bash
-uv run python -m src.etl.download --listar
+python -m src.etl.download --listar
 ```
 
 ```bash
-uv run python -m src.etl.download --competencia 2026-09
+python -m src.etl.download --competencia 2026-09
 ```
 
 Sem `--competencia` ele pega a mais recente publicada. O download é multipart
@@ -73,7 +78,7 @@ voltar em vez de falhar.
 ### Construir a base
 
 ```bash
-uv run python -m src.etl.pipeline --origem ./Download --switch --processos 8
+python -m src.etl.pipeline --origem ./Download --switch --processos 8
 ```
 
 Onze fases: base nova → modo carga → tabelas sem trava → carga em N processos →
@@ -86,17 +91,17 @@ Leva cerca de 6 h em 8 processos.
 ### Consultar
 
 ```bash
-uv run python -m src.consulta.empresa 08314885
+python -m src.consulta.empresa 08314885
 ```
 
 ```bash
-uv run python -m src.consulta.empresa 08.314.885/0001-05 --json
+python -m src.consulta.empresa 08.314.885/0001-05 --json
 ```
 
 ### Relatório de qualidade
 
 ```bash
-uv run python -m src.validation.qualidade --producao
+python -m src.validation.qualidade --producao
 ```
 
 ## Consulta SQL direta
