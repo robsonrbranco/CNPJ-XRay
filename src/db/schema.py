@@ -244,12 +244,29 @@ INDEXES: dict[str, tuple[str, ...]] = {
     "estabelecimento_municipio": ("estabelecimento", "municipio"),
     # Recorte geográfico e faixa de capital são os dois filtros analíticos que
     # ainda varriam a tabela inteira: 73 M linhas em `estabelecimento` e 70 M em
-    # `empresa`. `uf` tem só 27 valores distintos, então o índice não é seletivo
-    # sozinho — serve porque o Firebird cruza bitmaps de vários índices, e
-    # combinado com `estabelecimento_situacao` ou `estabelecimento_municipio`
-    # troca a varredura completa por interseção. `capital_social` é o oposto:
-    # coluna numérica quase única, onde o índice serve principalmente para
-    # consulta por faixa e para ORDER BY sem sort.
+    # `empresa`. `capital_social` é coluna quase única — índice clássico, serve
+    # para faixa e para ORDER BY sem sort; medido 2,5x.
+    #
+    # `uf` tem só 27 valores distintos e parece candidato a ser removido por
+    # baixa cardinalidade. Não é, e vale registrar o porquê com número, porque
+    # a medição ingênua engana:
+    #
+    #   uf = 'RJ' (2.317.296 linhas)  104,0s   <- pior dos 27 casos
+    #   uf = 'AC' (   54.152 linhas)    1,4s
+    #   uf = 'RR' (   51.765 linhas)    1,5s
+    #   sem o índice, QUALQUER uf       ~119s  (varredura de 73 M)
+    #
+    # Ou seja, ~80x para a maioria das UFs e 1,15x para a maior. Medir só uma
+    # UF grande e concluir que "o índice rende 1,2x" é medir o pior caso e
+    # chamá-lo de retrato.
+    #
+    # Custo: 439,9 MB (26.848 páginas folha), 1,3% da base — metade do que se
+    # supõe olhando 73 M nós, porque a compressão de prefixo leva o nó médio a
+    # 5,93 bytes contra 15,86 do índice de CNPJ completo. É, junto com
+    # `estabelecimento_situacao`, o índice mais barato desta tabela.
+    #
+    # E o plano confirma que os dois trabalham juntos, que era a aposta:
+    #   PLAN (ESTABELECIMENTO INDEX (ESTABELECIMENTO_UF, ESTABELECIMENTO_SITUACAO))
     "estabelecimento_uf": ("estabelecimento", "uf"),
     "empresa_capital_social": ("empresa", "capital_social"),
     # Domínio por código. Enquanto as tabelas de domínio tinham PRIMARY KEY,
