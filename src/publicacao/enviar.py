@@ -18,14 +18,21 @@ reenviadas.
 
 O pico de disco no host
 -----------------------
-Este é o detalhe que decide se o desenho cabe. Descompactar com todas as partes
-ainda em disco exigiria 12,2 + 34,2 = **46,4 GB** no pico, contra ~46 GB livres
-no node — sem margem nenhuma.
+Descompactar com todas as partes ainda em disco exigiria 12,2 + 34,2 = **46,4
+GB** no pico. O host tem **60 GB livres** (confirmado em 20/09/2026), então
+isso caberia — com 13,6 GB de sobra.
 
 Apagando **cada parte assim que ela é consumida**, o total em disco em qualquer
 instante é `12,2·(1-f) + 34,2·f`, que cresce monotonicamente até 34,2 GB no fim.
-O pico vira o tamanho da própria base. São 12 GB de diferença, e é por isso que
-`trocar-base.sh` alimenta o `gunzip` parte a parte em vez de concatenar tudo.
+O pico vira o tamanho da própria base, e a sobra passa de 13,6 para 25,8 GB.
+
+Os 12 GB de diferença valem porque o item 9 do LICOES-APRENDIDAS.md do
+infra-olympus registra o `containerd` indo de 16 GB a 26 GB **numa única sessão
+de deploys**. Uma sessão dessas durante a troca comeria quase toda a sobra de
+13,6 GB; não chega perto dos 25,8 GB. É por isso que `trocar-base.sh` alimenta
+o `gunzip` parte a parte em vez de concatenar tudo — não por não caber, mas por
+não deixar a troca mensal a uma coincidência de distância de encher o disco do
+node inteiro.
 
 O que NÃO é automatizado
 ------------------------

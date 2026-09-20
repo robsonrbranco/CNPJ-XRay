@@ -6,18 +6,24 @@
 # está aqui, num script só: cada ida e volta de SSH a mais seria uma janela em
 # que a conexão cai com o serviço parado e a base pela metade.
 #
-# O detalhe que decide se isto cabe no disco
-# ------------------------------------------
+# Por que o laço abaixo tem um `rm` dentro do pipe
+# ------------------------------------------------
 # A base tem 34,2 GB e as partes somam ~12,2 GB. Concatenar tudo e descompactar
-# exigiria 46,4 GB de pico, contra ~46 GB livres no node -- sem margem.
+# daria 46,4 GB de pico. O host tem 60 GB livres (confirmado em 20/09/2026),
+# então caberia, com 13,6 GB de sobra.
 #
 # Alimentando o `gunzip` parte a parte e **apagando cada uma assim que é
 # consumida**, o total em disco em qualquer instante é
 #
 #     12,2·(1-f) + 34,2·f
 #
-# que cresce até 34,2 GB no fim. O pico vira o tamanho da própria base. São
-# 12 GB de diferença, e é a razão de o laço abaixo ter um `rm` dentro do pipe.
+# que cresce até 34,2 GB no fim: o pico vira o tamanho da própria base, e a
+# sobra vai de 13,6 para 25,8 GB.
+#
+# Os 12 GB valem porque o containerd deste node já cresceu 10 GB numa única
+# sessão de deploys (item 9 do LICOES-APRENDIDAS.md do infra-olympus). Isso
+# comeria quase toda a sobra de 13,6 GB, e não chega perto dos 25,8 GB.
+# A troca mensal não deve depender de ninguém estar fazendo deploy ou não.
 #
 # Ordem das operações
 # -------------------
