@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 
 from . import cnpj as mod_cnpj
 from . import serpro, token as mod_token
+from .conexao import ConexaoViva
 from .config import ConfigAPI
 from .credenciais import Credenciais
 from .uso import Estatisticas, Log
@@ -59,9 +60,16 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
     consulta real; substituí-la não muda nenhum caminho de código testado
     abaixo, só de onde o dado vem.
     """
+    # Conexão viva por worker. Abrir attachment em embedded custa ~387 ms e a
+    # consulta indexada custa 0,4 ms -- sem isto a API paga o attachment a cada
+    # requisição. Medido: 772 ms por ficha contra 11,6 ms.
+    viva: ConexaoViva | None = None
     if consultar is None:
         from ..consulta.empresa import consultar as _consultar
-        consultar = _consultar
+        viva = ConexaoViva()
+
+        def consultar(cnpj_basico):
+            return viva.executar(lambda con: _consultar(cnpj_basico, con=con))
 
     app = FastAPI(title="CNPJ-XRay — Consulta CNPJ", version="2.0")
 
@@ -70,6 +78,7 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
     # e deixar no lifespan significaria que importar a aplicação sem executá-lo
     # devolve um objeto quebrado. Cada worker constrói o seu, e é isso que
     # dispensa lock no log: nenhum arquivo é compartilhado entre processos.
+    app.state.conexao = viva
     app.state.credenciais = Credenciais(cfg.credenciais)
     app.state.log = Log(cfg.logs)
     app.state.estatisticas = Estatisticas(cfg.estatisticas)

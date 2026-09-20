@@ -23,6 +23,7 @@ coisas mudaram além do dialeto, e ambas eram defeito lá:
 import argparse
 import json
 import sys
+from contextlib import contextmanager
 from decimal import Decimal
 
 from dotenv import load_dotenv
@@ -123,10 +124,37 @@ SELECT codigo, descricao FROM cnae WHERE codigo IN ({}) ORDER BY codigo
 """
 
 
-def consultar(cnpj_basico: str) -> dict:
-    """Devolve a ficha inteira numa única conexão."""
+@contextmanager
+def _conexao(con=None):
+    """Usa a conexão recebida, ou abre uma própria e fecha ao sair.
+
+    Conexão emprestada NÃO é fechada aqui: quem emprestou é dono do ciclo de
+    vida dela.
+    """
+    if con is not None:
+        yield con
+        return
+    with connection.conectar() as propria:
+        yield propria
+
+
+def consultar(cnpj_basico: str, con=None) -> dict:
+    """Devolve a ficha inteira numa única conexão.
+
+    `con` permite reaproveitar uma conexão já aberta, e isso não é detalhe de
+    conveniência: em Firebird embedded **abrir o attachment custa ~387 ms**,
+    contra 0,4 ms da consulta indexada. O engine inicializa dentro do processo
+    e lê páginas de cabeçalho e metadados a cada abertura.
+
+    Medido contra a base real de 34,2 GB: ficha completa com conexão nova a
+    cada chamada dá 772 ms; reaproveitando a conexão, 11,6 ms. **66x.**
+
+    Sem `con`, abre e fecha uma — é o que a linha de comando quer, porque ali o
+    processo morre em seguida de qualquer jeito. A API passa a sua, viva pelo
+    tempo do worker.
+    """
     ficha: dict = {"cnpj_basico": cnpj_basico}
-    with connection.conectar() as con:
+    with _conexao(con) as con:
         cur = con.cursor()
 
         cur.execute(SQL_EMPRESA, (cnpj_basico,))

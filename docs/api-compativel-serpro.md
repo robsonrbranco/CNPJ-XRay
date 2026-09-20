@@ -201,3 +201,42 @@ a validação de DV e a camada de token.
   `apigateway.conectagov.estaleiro.serpro.gov.br/api-cnpj-{basica,qsa,empresa}/v2/`.
   Os recursos são os mesmos; o prefixo a imitar depende de qual cliente se quer
   atender sem alteração.
+
+## Desempenho: a conexão é viva, e isso não é detalhe
+
+Medido em 2026-09-20 contra a base real de produção (34,2 GB, 222 M linhas),
+Firebird embedded em container Linux:
+
+| | mediana |
+|---|---:|
+| abrir um attachment | **387 ms** |
+| a consulta indexada, já conectado | **0,4 ms** |
+| ficha completa, conexão por requisição | 772 ms |
+| ficha completa, conexão viva | **11,6 ms** |
+
+Em embedded o attachment não é conexão de rede barata: o engine inicializa
+dentro do processo e lê páginas de cabeçalho e metadados. Abrir uma conexão por
+requisição fazia a API pagar 387 ms para nada.
+
+Via HTTP, ponta a ponta, com a conexão viva: **mediana de 12 ms**, p90 de 25 ms.
+A primeira requisição de cada worker paga o attachment (~530 ms) e as seguintes
+não.
+
+**Por que segurar conexão aberta é seguro aqui**, quando em geral não é:
+
+* **Invalidação** — a base é read-only e imutável durante a vida do pod. Não há
+  escrita de outro processo para enxergar, e a troca mensal derruba o pod.
+* **Transação longa** — em base que não muda não há versão antiga de página a
+  segurar nem lixo a acumular.
+
+O que sobra é a conexão morrer, e `src/api/conexao.py` reabre **uma** vez.
+Insistir mais esconderia uma base ausente atrás de latência crescente.
+
+### Uma suspeita minha que estava errada
+
+A primeira medição deu ~1 s por consulta e eu atribuí ao `drvfs` — o sistema de
+arquivos do Windows visto pelo WSL. Copiei os 34,2 GB para ext4 nativo para
+isolar a variável: **ext4 842 ms contra drvfs 987 ms**, só 15%.
+
+O sistema de arquivos não era o gargalo. Sem o experimento eu teria otimizado o
+armazenamento e o problema continuaria inteiro.
