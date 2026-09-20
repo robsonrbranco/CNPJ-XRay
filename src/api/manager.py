@@ -21,6 +21,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from . import esquemas
 from .config import ConfigAPI
 from .credenciais import Credenciais, CredencialNaoEncontrada, STATUS_VALIDOS
 from .uso import Estatisticas
@@ -43,8 +44,27 @@ class AlteracaoCredencial(BaseModel):
     status: str | None = None
 
 
+DESCRICAO = """Gestão de credenciais e estatísticas de uso. **Não faz parte do contrato do
+SERPRO** — esta é a parte nossa.
+
+**Esta aplicação não deve ser exposta.** Ela roda em processo e porta
+separados da API pública, e não tem autenticação própria de propósito: uma
+credencial capaz de criar credenciais seria escalada de privilégio, e um
+segundo mecanismo baseado em segredo daria a falsa impressão de que publicar a
+porta é aceitável. O isolamento de rede é a única proteção que não depende de
+nenhum segredo estar correto.
+
+Os erros aqui saem como `{"detail": ...}`, e não `{"message": ...}` como na
+API pública — lá o formato imita o SERPRO, aqui é nosso.
+"""
+
+
 def criar_app(cfg: ConfigAPI) -> FastAPI:
-    app = FastAPI(title="CNPJ-XRay — manager", version="1.0")
+    app = FastAPI(
+        title="CNPJ-XRay — manager",
+        version="1.0",
+        description=DESCRICAO,
+    )
     app.state.credenciais = Credenciais(cfg.credenciais)
     app.state.estatisticas = Estatisticas(cfg.estatisticas)
     app.state.cfg = cfg
@@ -57,14 +77,28 @@ def criar_app(cfg: ConfigAPI) -> FastAPI:
 
     # -- credenciais ----------------------------------------------------
 
-    @app.get("/manager/credenciais")
+    @app.get(
+        "/manager/credenciais",
+        response_model=esquemas.ListaCredenciais,
+        responses=esquemas.ENTRADA_INVALIDA,
+        summary="Lista as credenciais",
+        tags=["credenciais"],
+    )
     async def listar(request: Request, status: str | None = None):
         if status and status not in STATUS_VALIDOS:
             raise HTTPException(400, f"status inválido: {status}")
         creds = request.app.state.credenciais.listar(status)
         return {"credenciais": [c.para_json() for c in creds]}
 
-    @app.post("/manager/credenciais", status_code=201)
+    @app.post(
+        "/manager/credenciais",
+        status_code=201,
+        response_model=esquemas.CredencialCriada,
+        summary="Inclui uma credencial",
+        description="Devolve o `consumerSecret` **uma única vez**. Depois "
+                    "disto só o hash existe, e não há como recuperá-lo.",
+        tags=["credenciais"],
+    )
     async def incluir(request: Request, dados: NovaCredencial):
         cred, secret = request.app.state.credenciais.criar(**dados.model_dump())
         # O segredo aparece UMA vez. Depois disto só existe o hash, e não há
@@ -72,13 +106,25 @@ def criar_app(cfg: ConfigAPI) -> FastAPI:
         return {**cred.para_json(), "consumerSecret": secret,
                 "aviso": "guarde o consumerSecret: ele não será exibido de novo"}
 
-    @app.get("/manager/credenciais/{chave}")
+    @app.get(
+        "/manager/credenciais/{chave}",
+        response_model=esquemas.CredencialComConsumo,
+        responses=esquemas.NAO_ENCONTRADA,
+        summary="Consulta uma credencial",
+        tags=["credenciais"],
+    )
     async def consultar(request: Request, chave: str):
         cred = _cred(request, chave)
         usado = request.app.state.estatisticas.consumo_do_mes(chave)
         return {**cred.para_json(), "consumoDoMes": usado}
 
-    @app.patch("/manager/credenciais/{chave}")
+    @app.patch(
+        "/manager/credenciais/{chave}",
+        response_model=esquemas.Credencial,
+        responses={**esquemas.NAO_ENCONTRADA, **esquemas.ENTRADA_INVALIDA},
+        summary="Altera dados do contratante, quota ou status",
+        tags=["credenciais"],
+    )
     async def alterar(request: Request, chave: str, dados: AlteracaoCredencial):
         campos = {k: v for k, v in dados.model_dump().items() if v is not None}
         if not campos:
@@ -90,14 +136,30 @@ def criar_app(cfg: ConfigAPI) -> FastAPI:
             raise HTTPException(400, str(e)) from e
         return alterada.para_json()
 
-    @app.post("/manager/credenciais/{chave}/rotacionar")
+    @app.post(
+        "/manager/credenciais/{chave}/rotacionar",
+        response_model=esquemas.SegredoRotacionado,
+        responses=esquemas.NAO_ENCONTRADA,
+        summary="Gera um segredo novo, mantendo a chave",
+        description="O cliente atualiza um valor, não dois, e o histórico de "
+                    "uso continua ligado à mesma credencial.",
+        tags=["credenciais"],
+    )
     async def rotacionar(request: Request, chave: str):
         _cred(request, chave)
         secret = request.app.state.credenciais.rotacionar(chave)
         return {"consumerKey": chave, "consumerSecret": secret,
                 "aviso": "o segredo anterior deixou de valer imediatamente"}
 
-    @app.delete("/manager/credenciais/{chave}")
+    @app.delete(
+        "/manager/credenciais/{chave}",
+        response_model=esquemas.Credencial,
+        responses=esquemas.NAO_ENCONTRADA,
+        summary="Revoga uma credencial",
+        description="**Não apaga.** Marca `status` e `revogadaEm`, porque o "
+                    "uso histórico precisa continuar íntegro nas estatísticas.",
+        tags=["credenciais"],
+    )
     async def revogar(request: Request, chave: str):
         _cred(request, chave)
         # Revogar NÃO apaga: o uso histórico precisa continuar íntegro nas
@@ -106,12 +168,23 @@ def criar_app(cfg: ConfigAPI) -> FastAPI:
 
     # -- estatísticas ---------------------------------------------------
 
-    @app.get("/manager/estatisticas")
+    @app.get(
+        "/manager/estatisticas",
+        response_model=esquemas.Estatisticas,
+        summary="Uso geral, sintético",
+        tags=["estatísticas"],
+    )
     async def estatisticas_gerais(request: Request, competencia: str | None = None):
         request.app.state.estatisticas.consolidar(cfg.logs)
         return request.app.state.estatisticas.resumo(competencia=competencia)
 
-    @app.get("/manager/estatisticas/{chave}")
+    @app.get(
+        "/manager/estatisticas/{chave}",
+        response_model=esquemas.EstatisticasDaCredencial,
+        responses=esquemas.NAO_ENCONTRADA,
+        summary="Uso de uma credencial, com a quota contratada",
+        tags=["estatísticas"],
+    )
     async def estatisticas_da_credencial(request: Request, chave: str,
                                          competencia: str | None = None):
         cred = _cred(request, chave)
@@ -125,11 +198,25 @@ def criar_app(cfg: ConfigAPI) -> FastAPI:
             )
         return resumo
 
-    @app.post("/manager/manutencao/consolidar")
+    @app.post(
+        "/manager/manutencao/consolidar",
+        response_model=esquemas.Consolidacao,
+        summary="Consolida o log analítico no sintético",
+        description="Idempotente: rodar duas vezes não conta duas vezes.",
+        tags=["manutenção"],
+    )
     async def consolidar(request: Request, incluir_hoje: bool = False):
         return request.app.state.estatisticas.consolidar(cfg.logs, incluir_hoje)
 
-    @app.post("/manager/manutencao/podar")
+    @app.post(
+        "/manager/manutencao/podar",
+        response_model=esquemas.Poda,
+        responses=esquemas.ENTRADA_INVALIDA,
+        summary="Apaga log analítico já consolidado",
+        description="**Não há janela de retenção automática.** `dias` é "
+                    "obrigatório: apagar histórico é sempre ato deliberado.",
+        tags=["manutenção"],
+    )
     async def podar(request: Request, dias: int | None = None):
         """Apaga o analítico já consolidado mais velho que `dias`.
 
