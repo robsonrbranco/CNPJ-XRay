@@ -156,6 +156,134 @@ def test_a_pasta_de_envio_e_separada_da_base_em_uso(monkeypatch):
     assert d.envio.startswith(d.pasta_fdb)
 
 
+# ---------------------------------------------------------------------------
+# a ordem da publicação
+# ---------------------------------------------------------------------------
+
+def test_publicar_para_o_pod_antes_de_transmitir(monkeypatch):
+    """A ordem é o ponto todo do desenho, e não se deduz lendo as funções.
+
+    O host tem 41 GB livres e a base ocupa 34,2 GB: com ela em disco sobram
+    6,8 GB, e as partes precisam de 12,2 GB. Transmitir antes de apagar encheria
+    o disco do node — que num k3s não derruba só o Themis, gera DiskPressure e
+    despeja pods dos outros cinco serviços.
+
+    `preparar` fica antes de tudo por outro motivo: é a etapa longa e roda
+    inteira na estação. Derrubar o serviço para só então começar a comprimir
+    34 GB seria downtime de graça."""
+    ordem = []
+
+    def registra(nome, retorno=0):
+        def f(*a, **k):
+            ordem.append(nome)
+            return retorno
+        return f
+
+    monkeypatch.setenv("OLYMPUS_HOST", "exemplo")
+    monkeypatch.setattr(mod, "preparar", registra("preparar"))
+    monkeypatch.setattr(mod, "parar", registra("parar"))
+    monkeypatch.setattr(mod, "enviar", registra("enviar"))
+    monkeypatch.setattr(mod, "trocar", registra("trocar"))
+    monkeypatch.setattr(mod, "conferir_servico", registra("conferir"))
+    monkeypatch.setattr(sys, "argv", ["enviar", "publicar"])
+
+    assert mod.main() == 0
+    assert ordem == ["preparar", "parar", "enviar", "trocar", "conferir"]
+
+
+def test_publicar_nao_transmite_se_a_parada_falhar(monkeypatch):
+    """Falhar em parar o pod e seguir transmitindo seria o pior caso: o Firebird
+    com a base aberta, o scp enchendo o disco, e ninguém avisado."""
+    ordem = []
+
+    def registra(nome, retorno=0):
+        def f(*a, **k):
+            ordem.append(nome)
+            return retorno
+        return f
+
+    monkeypatch.setenv("OLYMPUS_HOST", "exemplo")
+    monkeypatch.setattr(mod, "preparar", registra("preparar"))
+    monkeypatch.setattr(mod, "parar", registra("parar", 1))
+    monkeypatch.setattr(mod, "enviar", registra("enviar"))
+    monkeypatch.setattr(mod, "trocar", registra("trocar"))
+    monkeypatch.setattr(mod, "conferir_servico", registra("conferir"))
+    monkeypatch.setattr(sys, "argv", ["enviar", "publicar"])
+
+    assert mod.main() != 0
+    assert ordem == ["preparar", "parar"]
+
+
+def test_enviar_recusa_quando_o_disco_do_host_nao_da(monkeypatch, tmp_path):
+    """A conferência de espaço tem que ser ANTES da transmissão.
+
+    O trocar-base.sh também confere, mas àquela altura já se gastou de 1 a 4 h
+    transmitindo — e o scp já encheu o disco no caminho. Conferir depois é
+    diagnóstico, não proteção."""
+    trabalho = tmp_path / "envio"
+    trabalho.mkdir()
+    (trabalho / "manifesto-envio.json").write_text(json.dumps({
+        "fdb_bytes": 34_200_000_000,
+        "comprimido_bytes": 12_200_000_000,
+        "partes": [{"nome": "base.gz.000", "bytes": 10, "sha256": "abc"}],
+    }), encoding="utf-8")
+
+    chamadas = []
+
+    class Resposta:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def falso_run(cmd, *a, **k):
+        chamadas.append(cmd)
+        return Resposta()
+
+    monkeypatch.setattr(mod.subprocess, "run", falso_run)
+    # 6,8 GB: o que sobra com a base de 34,2 GB ainda em disco.
+    monkeypatch.setattr(mod, "espaco_livre_no_host", lambda d: 6_800_000_000)
+    monkeypatch.setenv("OLYMPUS_HOST", "exemplo")
+
+    falhas = mod.enviar(mod.Destino.do_ambiente(), trabalho)
+
+    assert falhas > 0, "deveria ter recusado"
+    assert not any("scp" in str(c) for c in chamadas), \
+        "não pode ter transmitido nada"
+
+
+def test_enviar_segue_quando_o_disco_do_host_da(monkeypatch, tmp_path):
+    """O outro lado: recusar sempre também passaria no teste acima."""
+    trabalho = tmp_path / "envio"
+    trabalho.mkdir()
+    (trabalho / "manifesto-envio.json").write_text(json.dumps({
+        "fdb_bytes": 34_200_000_000,
+        "comprimido_bytes": 12_200_000_000,
+        "partes": [{"nome": "base.gz.000", "bytes": 10, "sha256": "abc"}],
+    }), encoding="utf-8")
+    (trabalho / "base.gz.000").write_bytes(b"0123456789")
+
+    chamadas = []
+
+    class Resposta:
+        returncode = 0
+        stdout = "abc"
+        stderr = ""
+
+    def falso_run(cmd, *a, **k):
+        chamadas.append(cmd)
+        return Resposta()
+
+    monkeypatch.setattr(mod.subprocess, "run", falso_run)
+    # 41 GB: o disco do host depois de a base antiga sair.
+    monkeypatch.setattr(mod, "espaco_livre_no_host", lambda d: 41_000_000_000)
+    monkeypatch.setenv("OLYMPUS_HOST", "exemplo")
+
+    falhas = mod.enviar(mod.Destino.do_ambiente(), trabalho)
+
+    assert falhas == 0
+    assert any("scp" in str(c) for c in chamadas), "deveria ter transmitido"
+
+
 def test_as_duas_pastas_do_host_sao_distintas(monkeypatch):
     """A base é trocada todo mês; credenciais e log não. Compartilhar a pasta
     faria um consumidor cadastrado sumir na virada."""

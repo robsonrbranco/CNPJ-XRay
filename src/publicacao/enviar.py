@@ -2,9 +2,10 @@
 """Publica a base no host do Olympus: compacta, fatia, envia e troca.
 
     python -m src.publicacao.enviar preparar          compacta e fatia
+    python -m src.publicacao.enviar parar             para o pod e apaga a base
     python -m src.publicacao.enviar enviar            transmite em paralelo
-    python -m src.publicacao.enviar trocar            para o pod, troca, sobe
-    python -m src.publicacao.enviar publicar          as tres em sequencia
+    python -m src.publicacao.enviar trocar            descompacta e sobe o pod
+    python -m src.publicacao.enviar publicar          as quatro em sequencia
 
 Por que compactar e fatiar
 --------------------------
@@ -18,21 +19,25 @@ reenviadas.
 
 O pico de disco no host
 -----------------------
-Descompactar com todas as partes ainda em disco exigiria 12,2 + 34,2 = **46,4
-GB** no pico. O host tem **60 GB livres** (confirmado em 20/09/2026), então
-isso caberia — com 13,6 GB de sobra.
+O host tem **41 GB livres** (medido no host em 20/09/2026) e a base ocupa
+34,2 GB. Isso manda em duas decisões deste módulo.
 
-Apagando **cada parte assim que ela é consumida**, o total em disco em qualquer
-instante é `12,2·(1-f) + 34,2·f`, que cresce monotonicamente até 34,2 GB no fim.
-O pico vira o tamanho da própria base, e a sobra passa de 13,6 para 25,8 GB.
+**A base antiga sai antes da transmissão.** Com ela em disco sobram 6,8 GB, e
+as partes precisam de 12,2 GB — a transmissão não cabe. Pior: o `scp` encheria
+o disco do node, e disco cheio num k3s não derruba só o Themis, gera
+DiskPressure e despeja pods dos outros cinco serviços. Por isso `parar` vem
+antes de `enviar`, e não depois.
 
-Os 12 GB de diferença valem porque o item 9 do LICOES-APRENDIDAS.md do
-infra-olympus registra o `containerd` indo de 16 GB a 26 GB **numa única sessão
-de deploys**. Uma sessão dessas durante a troca comeria quase toda a sobra de
-13,6 GB; não chega perto dos 25,8 GB. É por isso que `trocar-base.sh` alimenta
-o `gunzip` parte a parte em vez de concatenar tudo — não por não caber, mas por
-não deixar a troca mensal a uma coincidência de distância de encher o disco do
-node inteiro.
+O preço é downtime: deixa de ser só a descompactação (~15 min) e passa a
+cobrir a transmissão inteira, 1 a 4 h conforme o upload. Não custa dado — a
+estação continua com o original, e o envio é retomável.
+
+**Cada parte é apagada assim que é consumida.** Com os 41 GB livres, o total
+em disco durante a descompactação é `12,2·(1-f) + 34,2·f`, que cresce até
+34,2 GB. Concatenando tudo primeiro seriam 46,4 GB, que não cabem.
+
+Duas bases nunca caberiam: 34,2 × 2 = 68,4 GB contra 43 GB úteis. Não há
+versão deste processo que mantenha a base antiga até validar a nova.
 
 O que NÃO é automatizado
 ------------------------
@@ -261,6 +266,30 @@ def enviar(d: Destino, trabalho: Path, paralelas: int = PARALELAS) -> int:
 
     subprocess.run(d.ssh(f"mkdir -p {d.envio}"), check=True, capture_output=True)
 
+    # Conferir o espaço AQUI, e não no fim. O `trocar-base.sh` também confere,
+    # mas àquela altura já se gastou de 1 a 4 h transmitindo — e, pior, o `scp`
+    # teria enchido o disco do node no caminho. Disco cheio num k3s não derruba
+    # só o Themis: gera DiskPressure e despeja pods dos outros serviços.
+    #
+    # O limite é o tamanho da BASE, não o das partes: elas somem conforme são
+    # consumidas, então o pico da descompactação é 34,2 GB. Quem passa nesse
+    # teste passa nos dois.
+    livre = espaco_livre_no_host(d)
+    preciso = manifesto["fdb_bytes"] + 2_000_000_000
+    if livre < 0:
+        print("não consegui ler o espaço livre no host — seguindo assim mesmo",
+              flush=True)
+    elif livre < preciso:
+        print(f"ESPAÇO INSUFICIENTE em {d.host}:{d.pasta_fdb}\n"
+              f"  livre:   {livre / 1e9:.1f} GB\n"
+              f"  preciso: {preciso / 1e9:.1f} GB (base + folga)\n"
+              f"A base antiga ainda está lá? Rode 'parar' antes de 'enviar'.",
+              flush=True)
+        return len(partes)
+    else:
+        print(f"disco no host: {livre / 1e9:.1f} GB livres, "
+              f"preciso de {preciso / 1e9:.1f} GB", flush=True)
+
     print(f"enviando {len(partes)} partes para {d.host}:{d.envio} "
           f"({paralelas} em paralelo) ...", flush=True)
     t0 = time.time()
@@ -293,8 +322,8 @@ def enviar(d: Destino, trabalho: Path, paralelas: int = PARALELAS) -> int:
 # 3. trocar
 # ---------------------------------------------------------------------------
 
-def trocar(d: Destino, script: Path) -> int:
-    """Manda o script de troca para o host e o executa.
+def _rodar_no_host(d: Destino, script: Path) -> int:
+    """Manda um script para o host e o executa lá, com o ambiente do destino.
 
     Tudo que acontece com o pod parado roda LÁ, num script só: cada ida e volta
     de SSH a mais é uma janela em que a conexão pode cair com o serviço fora do
@@ -311,6 +340,32 @@ def trocar(d: Destino, script: Path) -> int:
         text=True,
     )
     return r.returncode
+
+
+def parar(d: Destino, script: Path) -> int:
+    """Para o pod e apaga a base, ANTES de transmitir.
+
+    Esta é a ordem que o espaço em disco impõe: com a base antiga lá, as partes
+    não cabem. Ver o cabeçalho do módulo.
+    """
+    return _rodar_no_host(d, script)
+
+
+def trocar(d: Destino, script: Path) -> int:
+    """Descompacta as partes já transmitidas e sobe o pod."""
+    return _rodar_no_host(d, script)
+
+
+def espaco_livre_no_host(d: Destino) -> int:
+    """Bytes livres na pasta da base, lidos no host."""
+    r = subprocess.run(
+        d.ssh(f"df -B1 --output=avail {d.pasta_fdb} | tail -1"),
+        capture_output=True, text=True,
+    )
+    try:
+        return int(r.stdout.strip())
+    except ValueError:
+        return -1
 
 
 def conferir_servico(d: Destino) -> int:
@@ -335,11 +390,13 @@ def conferir_servico(d: Destino) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(prog="enviar",
                                description="Publica a base no host do Olympus")
-    p.add_argument("acao", choices=["preparar", "enviar", "trocar", "publicar"])
+    p.add_argument("acao",
+                   choices=["preparar", "parar", "enviar", "trocar", "publicar"])
     p.add_argument("--fdb", default=os.getenv("DB_NAME", "./bd/cnpj_xray.fdb"))
     p.add_argument("--trabalho", default="./envio")
     p.add_argument("--paralelas", type=int, default=PARALELAS)
     p.add_argument("--script", default="./deploy/trocar-base.sh")
+    p.add_argument("--script-parada", default="./deploy/parar-e-limpar.sh")
     args = p.parse_args()
 
     trabalho = Path(args.trabalho)
@@ -350,20 +407,38 @@ def main() -> int:
 
     d = Destino.do_ambiente()
 
+    if args.acao == "parar":
+        return parar(d, Path(args.script_parada))
+
     if args.acao == "enviar":
         return 1 if enviar(d, trabalho, args.paralelas) else 0
 
     if args.acao == "trocar":
         return trocar(d, Path(args.script)) or conferir_servico(d)
 
-    # publicar: as três, parando no primeiro erro
+    # publicar: as quatro em sequência, parando no primeiro erro.
+    #
+    # A ORDEM É O PONTO. `parar` vem antes de `enviar` porque as partes não
+    # cabem em disco junto com a base antiga — e é por isso que `preparar`, que
+    # é a etapa longa e roda inteira aqui na estação, vem antes de tudo: não
+    # faz sentido derrubar o serviço para só então começar a comprimir 34 GB.
     preparar(Path(args.fdb), trabalho)
+
+    if rc := parar(d, Path(args.script_parada)):
+        print("\nNão consegui parar o pod e limpar. Nada foi transmitido.")
+        return rc
+
+    # Daqui em diante o serviço está FORA DO AR e a base antiga já foi apagada.
     if enviar(d, trabalho, args.paralelas):
         print("\nNÃO vou trocar com parte faltando.")
+        print("O serviço está PARADO e sem base. Rode 'enviar' de novo para "
+              "retomar de onde parou, e depois 'trocar'.")
         return 1
+
     if rc := trocar(d, Path(args.script)):
         print("\nA troca falhou. O pod pode estar parado — verifique.")
         return rc
+
     return conferir_servico(d)
 
 
