@@ -2,9 +2,13 @@
 #
 # Troca a base do Themis no host do Olympus.
 #
-# Roda NO HOST, com o pod parado. Tudo que acontece com o serviço fora do ar
-# está aqui, num script só: cada ida e volta de SSH a mais seria uma janela em
-# que a conexão cai com o serviço parado e a base pela metade.
+# Roda NO HOST, DEPOIS de `parar-e-limpar.sh` e da transmissão das partes. O
+# serviço já está fora do ar e a base antiga já foi apagada quando isto começa
+# — foi `parar-e-limpar.sh` que fez as duas coisas, antes do envio, porque as
+# partes não cabem em disco junto com a base antiga.
+#
+# Cada ida e volta de SSH a mais seria uma janela em que a conexão cai com o
+# serviço parado e a base pela metade, então o que falta fazer está tudo aqui.
 #
 # Por que o laço abaixo tem um `rm` dentro do pipe
 # ------------------------------------------------
@@ -76,40 +80,45 @@ done
 [ "$FALTA" -eq 0 ] || erro "$FALTA parte(s) faltando ou corrompida(s) — nada foi alterado"
 msg "  todas conferidas"
 
-# --- 2. espaco em disco -----------------------------------------------------
+# --- 2. o pod tem que estar parado ------------------------------------------
+# Nao e este script que para. Se alguem chamar fora de ordem, o pod estaria
+# servindo a base que estamos prestes a sobrescrever -- entao confere em vez de
+# assumir.
+
+REPLICAS=$(kubectl -n "$NAMESPACE" get deployment "$DEPLOYMENT" \
+    -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "?")
+if [ "$REPLICAS" != "0" ]; then
+    erro "$DEPLOYMENT esta com replicas=$REPLICAS — rode parar-e-limpar.sh antes"
+fi
+msg "$DEPLOYMENT parado (replicas=0), como esperado"
+
+# --- 3. espaco em disco -----------------------------------------------------
 # O pico e o tamanho da base, porque as partes somem conforme sao consumidas.
-# Mas a base ANTIGA ainda esta la neste momento, e so sai no passo 4.
+# A base antiga ja foi apagada la atras, entao o que ha em disco e so as partes.
 
 LIVRE=$(df -B1 --output=avail "$PASTA_FDB" | tail -1)
-ANTIGA=0
-[ -f "$ALVO" ] && ANTIGA=$(stat -c%s "$ALVO")
-DISPONIVEL=$((LIVRE + ANTIGA))
-msg "disco: $((LIVRE / 1000000000)) GB livres + $((ANTIGA / 1000000000)) GB da base antiga"
+PARTES_BYTES=$(du -sb "$ENVIO" 2>/dev/null | cut -f1 || echo 0)
+DISPONIVEL=$((LIVRE + PARTES_BYTES))
+msg "disco: $((LIVRE / 1000000000)) GB livres + $((PARTES_BYTES / 1000000000)) GB em partes que vao sumindo"
 if [ "$DISPONIVEL" -lt "$((FDB_BYTES + 2000000000))" ]; then
     erro "espaco insuficiente: precisa de $((FDB_BYTES / 1000000000)) GB + folga, ha $((DISPONIVEL / 1000000000)) GB"
 fi
 
-# --- 3. parar o pod ---------------------------------------------------------
-# scale 0 e nao delete pod: o Deployment recriaria o pod imediatamente, e ele
-# subiria em cima de uma base sendo descompactada.
-
-msg "parando $DEPLOYMENT (scale 0)"
-kubectl -n "$NAMESPACE" scale deployment "$DEPLOYMENT" --replicas=0
-kubectl -n "$NAMESPACE" wait --for=delete pod -l "app=$DEPLOYMENT" --timeout=180s 2>/dev/null || true
-msg "  parado"
-
-# A partir daqui o servico esta FORA DO AR. Qualquer saida sem religar deixa o
-# Themis parado, entao o trap cuida disso.
+# O servico ja esta FORA DO AR. Qualquer saida sem religar deixa o Themis
+# parado, entao o trap cuida disso.
 religar() {
     msg "religando $DEPLOYMENT"
     kubectl -n "$NAMESPACE" scale deployment "$DEPLOYMENT" --replicas=1 || true
 }
 trap religar EXIT
 
-# --- 4. apagar a antiga e descompactar a nova -------------------------------
+# --- 4. descompactar --------------------------------------------------------
+# A base antiga ja saiu em parar-e-limpar.sh. Se ainda estiver aqui, alguem
+# rodou fora de ordem e o `>` a truncaria em silencio -- melhor apagar de forma
+# explicita e dizer.
 
 if [ -f "$ALVO" ]; then
-    msg "apagando a base antiga ($((ANTIGA / 1000000000)) GB)"
+    msg "AVISO: ainda havia base em $ALVO; apagando"
     rm -f "$ALVO"
 fi
 
