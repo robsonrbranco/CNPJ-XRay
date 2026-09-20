@@ -143,9 +143,79 @@ mas pede olhar. A série observada cresce menos de 1% ao mês; 5% dá folga sem
 deixar passar uma carga duplicada. As tabelas de domínio ficam fora da régua:
 elas oscilam para baixo sem que isso seja erro.
 
+## Quem consulta: a API
+
+### O que o projeto de origem tinha
+
+O fork de origem **não trazia código de API** — não há `fastapi`, `flask`,
+`uvicorn`, router ou endpoint em nenhum commit dele. O que havia de consulta
+era um script de linha de comando (`consultar_empresa.py`, hoje portado para
+`src/consulta/empresa.py`) e arquivos `.sql`.
+
+Mas existia uma API, **noutro repositório**, e o documento de operação do
+upstream (`docs/atualizacao-base-receita.md`, removido daqui na 3.0.0 por
+descrever tablespaces de PostgreSQL) a registrava como consumidora:
+
+> Conexões da API caem no switch (`pg_terminate_backend`): a API fica alguns
+> segundos em `receita_db: degraded` e reconecta sozinha. Para zero erro, pare
+> a API no switch.
+
+Disso se extrai o desenho antigo: API separada, conectando ao PostgreSQL **pela
+rede**, com endpoint de saúde reportando o estado do banco, num servidor com
+volume dedicado.
+
+Este trecho fica registrado aqui porque é a única memória de que a base tem um
+consumidor — e ela quase se perdeu junto com a operação obsoleta que a cercava.
+
+### O que muda com o embedded
+
+| | upstream (servidor + API) | pod embedded |
+|---|---|---|
+| ligação API ↔ banco | TCP na 5432 | **mesmo processo** |
+| durante a troca | `pg_terminate_backend`, `degraded`, reconecta | o pod para; não há conexão a cair |
+| pool de conexões | necessário | cada worker tem seu próprio attachment |
+| credencial | usuário e senha | nenhuma |
+
+O ciclo de "cai, fica degradada, reconecta" **desaparece**: não existe conexão
+de rede entre a API e o banco. A API para junto com o pod, que é exatamente o
+downtime controlado do procedimento acima.
+
+### Como a API se encaixa
+
+É uma casca fina sobre o que já existe. `src/consulta/empresa.py` expõe
+`consultar(cnpj_basico)`, que devolve a ficha inteira como dicionário —
+empresa, estabelecimentos, sócios, Simples e CNAEs secundários resolvidos. Um
+endpoint é pouco mais que serializar isso.
+
+Três pontos que o embedded impõe:
+
+* **Vários workers exigem `ServerMode = Classic`.** Medido: com `Super`, um
+  worker sobe e os demais morrem no attach. Com `Classic`, 4 de 4 conectam.
+* **Não há pool entre processos.** Cada worker abre seu attachment ao subir e o
+  mantém. A base é read-only e imutável, então não há invalidação de cache nem
+  reconexão a gerenciar.
+* **O endpoint de saúde deve dizer qual competência está em disco**, lendo do
+  manifesto de publicação. É o equivalente honesto ao `receita_db: degraded` do
+  upstream: em vez de informar se a conexão está de pé — o que no embedded é
+  redundante com o pod estar de pé — informa *o que* está sendo servido.
+
 ## O que ainda não está definido
 
 **Onde o pod roda** — estação, servidor próprio, nuvem. Isso decide como os
 34 GB chegam ao volume (cópia local em minutos, ou rede em possivelmente
 horas) e, portanto, o tamanho real da janela de indisponibilidade. O passo 3
-acima é o único que fica em aberto.
+acima é o único do procedimento que fica em aberto.
+
+**A API é deste repositório ou de outro?** No upstream era de outro. Trazê-la
+para cá acrescenta uma dependência web e o projeto deixa de ser só ETL.
+
+**Quais endpoints.** Só a ficha por CNPJ, ou também busca por razão social, UF
+ou CNAE? A resposta decide quais índices fazem falta — hoje há 15, escolhidos
+para consulta por chave e para os recortes de `uf`, `municipio`,
+`situacao_cadastral` e `capital_social`. Busca textual por trecho de razão
+social **não tem como ser atendida**: o Firebird 3.0 não tem equivalente a
+trigrama, e a collation `WIN_PTBR` resolve caixa e acento, mas não busca por
+pedaço no meio do nome.
+
+**Exposição.** Se a API for acessível de fora do pod, autenticação volta ao
+desenho — não no Firebird, que em embedded não autentica, mas na camada HTTP.
