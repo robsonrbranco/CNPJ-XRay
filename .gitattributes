@@ -1,0 +1,7 @@
+# Scripts de shell SEMPRE com LF, inclusive na cópia de trabalho no Windows.
+#
+# `deploy/trocar-base.sh` não é executado aqui: ele é copiado por `scp` desta
+# cópia de trabalho para o host Linux e rodado lá. Com CRLF, o `bash` do host
+# falha na primeira linha com `$'\r': command not found` — e falharia com o
+# Themis já parado, no pior momento possível.
+*.sh text eol=lf

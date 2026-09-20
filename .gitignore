@@ -179,3 +179,6 @@ creds/
 # Log analitico da API: uma linha por consulta, com o CNPJ consultado.
 # Registrar o que cada cliente consulta e registrar a atividade comercial dele.
 logs-api/
+
+# Partes compactadas da base a caminho do host (12 GB)
+envio/
