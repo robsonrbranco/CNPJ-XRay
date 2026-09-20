@@ -58,6 +58,11 @@ def registrar(cfg: FirebirdConfig | None = None, forced_writes: bool = True) -> 
     db.dsn.value = cfg.dsn
     db.user.value = cfg.user
     db.password.value = cfg.password
+    if cfg.embedded:
+        # Sem isto o Dispatcher tentaria Remote primeiro. Embedded não
+        # autentica, mas o usuário ainda decide privilégio: sem `user` a
+        # conexão entra como o usuário do sistema operacional.
+        db.config.value = "Providers = Engine12"
     db.charset.value = cfg.charset
     db.db_charset.value = cfg.charset
     db.page_size.value = cfg.page_size
