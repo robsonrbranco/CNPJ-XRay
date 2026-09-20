@@ -88,16 +88,15 @@ jobs:
             themis=ghcr.io/robsonrbranco/cnpj-xray:${{ github.sha }}
           # 300s e não 120s: a strategy é Recreate, então o pod antigo morre
           # antes de o novo subir, e o novo só fica ready depois de abrir o
-          # attachment ao Firebird -- que custa ~530 ms mais o tempo de montar
-          # o volume de 50 GB.
+          # attachment ao Firebird -- que custa ~530 ms.
           kubectl -n olympus rollout status deployment/themis --timeout=300s
           rm kubeconfig.yaml
 
       - name: Confere o que ficou no ar
         run: |
           # Não basta o rollout terminar: o pod pode estar de pé servindo a
-          # competência errada, se o volume tiver sido trocado por engano. O
-          # /saude diz qual base está em disco.
+          # competência errada, se a base em /cnpj-xray-fdb tiver sido trocada
+          # por engano. O /saude diz qual base está em disco.
           resposta=$(curl -sf --max-time 30 https://themis.ecomciencia.com/saude)
           echo "$resposta"
           echo "$resposta" | grep -q '"status":"ok"' || {
