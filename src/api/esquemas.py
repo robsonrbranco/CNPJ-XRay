@@ -26,6 +26,30 @@ class Erro(BaseModel):
     message: str = Field(examples=["O número de CNPJ informado não é válido"])
 
 
+class Saude(BaseModel):
+    """Estado do pod e **proveniência do dado que ele está servindo**.
+
+    O `competencia` é o campo que importa. Sem ele, um consumidor que receba
+    uma resposta não tem como saber se o dado é de setembro ou de março — e a
+    diferença aparece justamente onde dói: uma CNAE que saiu do cadastro, uma
+    baixa que ainda não entrou.
+    """
+    status: str = Field(examples=["ok"])
+    competencia: str | None = Field(
+        default=None, examples=["2026-09"],
+        description="Competência da Receita de onde vieram os dados. Nula em "
+                    "base construída antes de a proveniência existir.",
+    )
+    construidaEm: str | None = Field(
+        default=None, examples=["2026-09-17T16:00:00+00:00"],
+        description="Quando a base foi construída — distinto da competência: "
+                    "recarregar uma competência antiga produz arquivo novo com "
+                    "dado velho.",
+    )
+    linhas: int | None = None
+    baseSomenteLeitura: bool | None = None
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = Field(default="Bearer", examples=["Bearer"])

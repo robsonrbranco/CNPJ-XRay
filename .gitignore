@@ -166,3 +166,16 @@ checkpoint.json
 # Artefatos de execucao: log do ETL, saida de gstat, relatorio de qualidade.
 # O diretorio inteiro, nao so *.log -- gstat e gbak escrevem .txt e .fbk.
 logs/
+
+# Credenciais da API e estatisticas de uso.
+#
+# O banco guarda so hash PBKDF2 com salt, nunca o segredo em claro -- mas
+# credencial de contratante nao tem por que estar num repositorio, e o
+# estatisticas.db carrega o padrao de consulta de cada cliente.
+#
+# `*.fdb` acima NAO cobre isto: estes sao SQLite, .db.
+creds/
+
+# Log analitico da API: uma linha por consulta, com o CNPJ consultado.
+# Registrar o que cada cliente consulta e registrar a atividade comercial dele.
+logs-api/

@@ -138,6 +138,48 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
         # Nunca vaza a exceção: mensagem de erro é superfície de informação.
         return JSONResponse(status_code=500, content={"message": MENSAGENS[500]})
 
+    # -- saúde e proveniência -------------------------------------------
+
+    @app.get(
+        "/saude",
+        response_model=esquemas.Saude,
+        summary="Estado do pod e competência dos dados servidos",
+        description="**Não faz parte do contrato do SERPRO** — é nossa, e fica "
+                    "fora de `/v2/` para não colidir com nenhum caminho futuro "
+                    "deles.\n\n"
+                    "Sem autenticação: serve de sonda de vivacidade, e a "
+                    "competência não é informação sensível — é o oposto, quem "
+                    "consome precisa dela para saber a idade do dado.",
+        tags=["operação"],
+    )
+    async def saude(request: Request):
+        def ler(con):
+            from ..db import manage
+            meta = manage.ler_metadados(con)
+            cur = con.cursor()
+            cur.execute("SELECT MON$READ_ONLY FROM MON$DATABASE")
+            return meta, bool(cur.fetchone()[0])
+
+        try:
+            meta, somente_leitura = (
+                request.app.state.conexao.executar(ler)
+                if request.app.state.conexao is not None else ({}, None)
+            )
+        except Exception:                                    # noqa: BLE001
+            # Sonda de vivacidade não pode derrubar o pod por causa do banco;
+            # ela existe para REPORTAR que ele está fora.
+            return JSONResponse(status_code=503,
+                                content={"status": "base inacessível"})
+
+        linhas = meta.get("linhas_total")
+        return {
+            "status": "ok",
+            "competencia": meta.get("competencia") or None,
+            "construidaEm": meta.get("construida_em") or None,
+            "linhas": int(linhas) if linhas and linhas.isdigit() else None,
+            "baseSomenteLeitura": somente_leitura,
+        }
+
     # -- token ----------------------------------------------------------
 
     @app.post(

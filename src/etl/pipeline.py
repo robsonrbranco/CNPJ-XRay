@@ -40,6 +40,7 @@ import logging
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -110,7 +111,8 @@ def _descartar_base_anterior(cfg_staging: FirebirdConfig) -> None:
 
 
 def construir(
-    cfg: FirebirdConfig, origem: Path, continuar: bool, processos: int
+    cfg: FirebirdConfig, origem: Path, continuar: bool, processos: int,
+    competencia: str | None = None,
 ) -> dict[str, int]:
     cfg_staging = _config_staging(cfg)
     arquivo = cfg_staging.caminho_local(cfg_staging.database)
@@ -190,6 +192,28 @@ def construir(
 
         totais = {tab: manage.contar(con, tab) for tab in schema.TABLES}
 
+        # Proveniência, gravada DENTRO da base.
+        #
+        # Sem isto o .fdb não sabe de onde veio: `MON$CREATION_DATE` diz quando
+        # o arquivo foi criado, não de qual competência são os dados. Recarregar
+        # uma competência antiga produziria arquivo novo com dado velho, e nada
+        # no banco denunciaria.
+        #
+        # Vai aqui, e não só no manifesto, porque o manifesto é um arquivo ao
+        # lado que pode se perder na cópia para o volume. A base viaja com a
+        # própria identidade.
+        console.print("\n[bold]6b. Proveniência[/bold]")
+        manage.gravar_metadados(con, {
+            "competencia": competencia or "?",
+            "construida_em": datetime.now(timezone.utc)
+                             .replace(microsecond=0).isoformat(),
+            "origem": str(origem),
+            "linhas_total": sum(totais.values()),
+            **{f"linhas_{tab}": n for tab, n in totais.items()},
+        })
+        console.print(f"   competência [cyan]{competencia or '?'}[/cyan], "
+                      f"{sum(totais.values()):,} linhas")
+
     console.print("\n[bold]7. Estatísticas dos índices[/bold]")
     connection.estatisticas(cfg_staging)
 
@@ -260,7 +284,7 @@ def main() -> None:
         )
 
     inicio = time.time()
-    totais = construir(cfg, origem, args.continuar, args.processos)
+    totais = construir(cfg, origem, args.continuar, args.processos, competencia)
 
     t = Table(title="Base construída", show_header=True, header_style="bold cyan")
     t.add_column("Tabela")
