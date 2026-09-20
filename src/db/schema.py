@@ -279,6 +279,35 @@ INDEXES: dict[str, tuple[str, ...]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Proveniência
+#
+# A base não sabia de onde veio. `MON$CREATION_DATE` diz quando o arquivo foi
+# criado, que não é a mesma coisa que a competência dos dados — recarregar uma
+# competência antiga produziria um arquivo novo com dado velho, e nada no
+# banco denunciaria isso.
+#
+# Sem esta tabela, responder "este pod está servindo agosto ou setembro?" exige
+# olhar o log da carga, o checkpoint ou a data do arquivo. Nenhum dos três está
+# dentro do banco, e nenhum viaja com ele quando o .fdb é copiado para o volume.
+#
+# Chave/valor em vez de colunas fixas: o conjunto de fatos sobre uma carga
+# cresce (contagem por tabela, tempo, versão do ETL), e uma tabela larga
+# exigiria migração a cada acréscimo numa base que é read-only.
+#
+# Fica FORA de TABLES de propósito: `TABLES` dirige o ETL, e não há arquivo da
+# Receita para carregar aqui.
+# ---------------------------------------------------------------------------
+METADADOS = "metadados"
+
+CREATE_METADADOS = f"""
+CREATE TABLE {METADADOS} (
+    chave  VARCHAR(40),
+    valor  VARCHAR(500)
+)
+"""
+
+
 # Chave natural de cada tabela: o que a Receita descreve como identificador do
 # registro. NÃO é PRIMARY KEY no banco -- serve para detectar carga duplicada e
 # para a remoção de repetição que a fonte traz.

@@ -189,3 +189,18 @@ def test_revogar_documenta_que_nao_apaga(spec_manager):
 def test_podar_documenta_que_dias_e_obrigatorio(spec_manager):
     d = spec_manager["paths"]["/manager/manutencao/podar"]["post"]
     assert "retenção automática" in d.get("description", "")
+
+
+def test_saude_documentada_e_fora_do_v2(spec):
+    """`/v2/` é o espaço de nomes do SERPRO."""
+    assert "/saude" in spec["paths"]
+    assert not any(c.startswith("/v2/") and "saude" in c for c in spec["paths"])
+
+
+def test_saude_documenta_a_diferenca_entre_competencia_e_data_da_carga(spec):
+    """São coisas distintas: recarregar uma competência antiga produz arquivo
+    novo com dado velho. Confundir as duas é o erro que a proveniência existe
+    para evitar."""
+    props = spec["components"]["schemas"]["Saude"]["properties"]
+    assert "Competência da Receita" in props["competencia"]["description"]
+    assert "dado velho" in props["construidaEm"]["description"]

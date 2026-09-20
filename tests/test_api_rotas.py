@@ -414,3 +414,74 @@ def test_podar_com_dias_explicito_funciona(gerente):
 
     assert r.status_code == 200
     assert r.json() == {"arquivosApagados": 0}
+
+
+# ---------------------------------------------------------------------------
+# /saude — proveniência
+# ---------------------------------------------------------------------------
+
+def test_saude_nao_exige_autenticacao(ambiente):
+    """Sonda de vivacidade não pode depender de credencial, e a competência não
+    é informação sensível — é o oposto: quem consome precisa dela para saber a
+    idade do dado que recebeu."""
+    assert ambiente["cliente"].get("/saude").status_code == 200
+
+
+def test_saude_reporta_a_competencia(cfg, monkeypatch):
+    """O campo que motivou o endpoint. Sem ele, um consumidor não distingue
+    dado de setembro de dado de março."""
+    class ConexaoFalsa:
+        def executar(self, funcao):
+            return ({"competencia": "2026-09",
+                     "construida_em": "2026-09-17T16:00:00+00:00",
+                     "linhas_total": "222197006"}, True)
+
+    app = publica.criar_app(cfg, consultar=lambda b: _ficha())
+    app.state.conexao = ConexaoFalsa()
+    r = TestClient(app, raise_server_exceptions=False).get("/saude")
+
+    assert r.status_code == 200
+    assert r.json() == {
+        "status": "ok",
+        "competencia": "2026-09",
+        "construidaEm": "2026-09-17T16:00:00+00:00",
+        "linhas": 222197006,
+        "baseSomenteLeitura": True,
+    }
+
+
+def test_saude_com_base_sem_proveniencia(cfg):
+    """Base construída antes de a tabela existir devolve competência nula, e
+    não erro: a produção atual era uma dessas até ser preenchida."""
+    class SemMetadados:
+        def executar(self, funcao):
+            return ({}, True)
+
+    app = publica.criar_app(cfg, consultar=lambda b: _ficha())
+    app.state.conexao = SemMetadados()
+    r = TestClient(app, raise_server_exceptions=False).get("/saude")
+
+    assert r.status_code == 200
+    assert r.json()["competencia"] is None
+
+
+def test_saude_reporta_base_inacessivel_em_vez_de_quebrar(cfg):
+    """A sonda existe para REPORTAR que o banco caiu, não para cair junto."""
+    class Quebrada:
+        def executar(self, funcao):
+            raise OSError("base sumiu do volume")
+
+    app = publica.criar_app(cfg, consultar=lambda b: _ficha())
+    app.state.conexao = Quebrada()
+    r = TestClient(app, raise_server_exceptions=False).get("/saude")
+
+    assert r.status_code == 503
+    assert "inacessível" in r.json()["status"]
+
+
+def test_saude_fica_fora_do_v2(ambiente):
+    """`/v2/` é o espaço de nomes do SERPRO. Pôr rota nossa ali arriscaria
+    colidir com um caminho futuro deles."""
+    caminhos = {r.path for r in ambiente["cliente"].app.routes}
+    assert "/saude" in caminhos
+    assert not any(c.startswith("/v2/") and "saude" in c for c in caminhos)

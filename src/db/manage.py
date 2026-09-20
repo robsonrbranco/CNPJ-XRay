@@ -93,3 +93,49 @@ def criar_indices(con) -> None:
             raise
 
     logger.info("Índices criados")
+
+
+# ---------------------------------------------------------------------------
+# Proveniência
+# ---------------------------------------------------------------------------
+
+def criar_metadados(con) -> None:
+    """Cria a tabela de proveniência, se ainda não existir."""
+    if tabela_existe(con, schema.METADADOS):
+        return
+    cur = con.cursor()
+    cur.execute(schema.CREATE_METADADOS)
+    con.commit()
+    logger.info("Tabela %s criada", schema.METADADOS)
+
+
+def gravar_metadados(con, dados: dict[str, object]) -> None:
+    """Regrava a proveniência inteira.
+
+    Apaga e reinsere em vez de atualizar chave a chave: a tabela é escrita uma
+    vez por carga, e substituir o conjunto todo evita sobrar chave de uma carga
+    anterior que a nova não produz mais.
+    """
+    criar_metadados(con)
+    cur = con.cursor()
+    cur.execute(f"DELETE FROM {schema.METADADOS}")
+    for chave, valor in dados.items():
+        cur.execute(
+            f"INSERT INTO {schema.METADADOS} (chave, valor) VALUES (?, ?)",
+            (str(chave)[:40], str(valor)[:500]),
+        )
+    con.commit()
+    logger.info("Proveniência gravada: %d chave(s)", len(dados))
+
+
+def ler_metadados(con) -> dict[str, str]:
+    """Devolve a proveniência, ou vazio se a base não a tiver.
+
+    Base construída antes desta tabela existir devolve `{}` — e o chamador
+    precisa tratar isso, porque a produção atual é uma dessas.
+    """
+    if not tabela_existe(con, schema.METADADOS):
+        return {}
+    cur = con.cursor()
+    cur.execute(f"SELECT chave, valor FROM {schema.METADADOS}")
+    return {c.strip(): (v or "").strip() for c, v in cur.fetchall()}
