@@ -81,18 +81,22 @@ WHERE e.cnpj_basico = ?
 """
 
 SQL_ESTABELECIMENTOS = """
-SELECT est.cnpj_basico, est.cnpj_ordem, est.cnpj_dv, est.nome_fantasia,
+SELECT est.cnpj_basico, est.cnpj_ordem, est.cnpj_dv,
+       est.identificador_matriz_filial, est.nome_fantasia,
        est.situacao_cadastral, est.data_situacao_cadastral,
        est.motivo_situacao_cadastral, mo.descricao,
+       est.situacao_especial, est.data_situacao_especial,
        est.data_inicio_atividade, est.cnae_fiscal_principal, cn.descricao,
        est.cnae_fiscal_secundaria, est.tipo_logradouro, est.logradouro,
        est.numero, est.complemento, est.bairro, est.cep, est.uf,
-       est.municipio, mu.descricao, est.ddd_1, est.telefone_1,
+       est.municipio, mu.descricao, est.pais, pa.descricao,
+       est.ddd_1, est.telefone_1, est.ddd_2, est.telefone_2,
        est.correio_eletronico
 FROM estabelecimento est
 LEFT JOIN motivo mo ON est.motivo_situacao_cadastral = mo.codigo
 LEFT JOIN cnae cn ON est.cnae_fiscal_principal = cn.codigo
 LEFT JOIN municipio mu ON est.municipio = mu.codigo
+LEFT JOIN pais pa ON est.pais = pa.codigo
 WHERE est.cnpj_basico = ?
 ORDER BY est.cnpj_ordem
 """
@@ -140,22 +144,33 @@ def consultar(cnpj_basico: str) -> dict:
         cur.execute(SQL_ESTABELECIMENTOS, (cnpj_basico,))
         estabelecimentos = []
         for r in cur.fetchall():
+            # Campos CRUS, um por coluna. Juntar `tipo_logradouro + logradouro
+            # + numero` num campo só, ou montar o telefone como "(14) 3496...",
+            # é decisão de apresentação — e destrói estrutura que outro
+            # consumidor precisa. A API compatível com o SERPRO quer
+            # `tipoLogradouro`, `logradouro` e `numero` separados, e
+            # `telefone[]{ddd, numero}`. Quem exibe é que junta.
             estabelecimentos.append({
+                "cnpj_basico": r[0], "cnpj_ordem": r[1], "cnpj_dv": r[2],
                 "cnpj_completo": f"{r[0]}{r[1]}{r[2]}",
-                "tipo": "MATRIZ" if r[1] == "0001" else "FILIAL",
-                "nome_fantasia": r[3],
-                "situacao_cadastral": r[4],
-                "situacao_cadastral_descricao": _descrever(SITUACAO, r[4], "DESCONHECIDA"),
-                "data_situacao_cadastral": r[5],
-                "motivo_situacao_cadastral": r[6], "motivo_descricao": r[7],
-                "data_inicio_atividade": r[8],
-                "cnae_fiscal_principal": r[9], "cnae_principal_descricao": r[10],
-                "cnae_fiscal_secundaria": r[11],
-                "logradouro": " ".join(x for x in (r[12], r[13], r[14]) if x),
-                "complemento": r[15], "bairro": r[16], "cep": r[17],
-                "uf": r[18], "municipio": r[19], "municipio_descricao": r[20],
-                "telefone": f"({r[21]}) {r[22]}" if r[21] and r[22] else (r[22] or None),
-                "correio_eletronico": r[23],
+                "identificador_matriz_filial": r[3],
+                "tipo": "MATRIZ" if r[3] == 1 else "FILIAL",
+                "nome_fantasia": r[4],
+                "situacao_cadastral": r[5],
+                "situacao_cadastral_descricao": _descrever(SITUACAO, r[5], "DESCONHECIDA"),
+                "data_situacao_cadastral": r[6],
+                "motivo_situacao_cadastral": r[7], "motivo_descricao": r[8],
+                "situacao_especial": r[9], "data_situacao_especial": r[10],
+                "data_inicio_atividade": r[11],
+                "cnae_fiscal_principal": r[12], "cnae_principal_descricao": r[13],
+                "cnae_fiscal_secundaria": r[14],
+                "tipo_logradouro": r[15], "logradouro": r[16], "numero": r[17],
+                "complemento": r[18], "bairro": r[19], "cep": r[20],
+                "uf": r[21], "municipio": r[22], "municipio_descricao": r[23],
+                "pais": r[24], "pais_descricao": r[25],
+                "ddd_1": r[26], "telefone_1": r[27],
+                "ddd_2": r[28], "telefone_2": r[29],
+                "correio_eletronico": r[30],
             })
         ficha["estabelecimentos"] = estabelecimentos
 
@@ -239,12 +254,18 @@ def exibir(ficha: dict) -> None:
         ]
         if secundarios:
             t.add_row("CNAE secundários", "\n".join(secundarios))
+        # A junção acontece AQUI, na exibição — `consultar()` devolve cru.
+        rua = " ".join(x for x in (est["tipo_logradouro"], est["logradouro"],
+                                   est["numero"]) if x)
         endereco = ", ".join(x for x in (
-            est["logradouro"], est["complemento"], est["bairro"],
+            rua, est["complemento"], est["bairro"],
             est["municipio_descricao"], est["uf"], est["cep"]) if x)
         t.add_row("Endereço", endereco or "—")
-        if est["telefone"]:
-            t.add_row("Telefone", est["telefone"])
+        fones = [f"({d}) {n}" if d else n
+                 for d, n in ((est["ddd_1"], est["telefone_1"]),
+                              (est["ddd_2"], est["telefone_2"])) if n]
+        if fones:
+            t.add_row("Telefone", "  ".join(fones))
         if est["correio_eletronico"]:
             t.add_row("E-mail", est["correio_eletronico"])
         console.print(t)
