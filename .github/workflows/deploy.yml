@@ -9,8 +9,9 @@
 # infra-olympus. Daí em diante o deploy é este workflow.
 #
 # O que este pipeline deliberadamente NÃO faz: publicar a base de 34,2 GB. Ela
-# é construída na estação e enviada ao volume à mão, com conferência antes de o
-# pod subir. Ver THEMIS.md no infra-olympus.
+# é construída na estação e enviada por `python -m src.publicacao.enviar`, que
+# para o pod, apaga a base e descompacta a nova. Isso é decisão humana, não
+# gatilho de push. Ver THEMIS.md no infra-olympus.
 
 name: deploy
 
