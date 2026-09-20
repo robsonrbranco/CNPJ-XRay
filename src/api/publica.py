@@ -27,11 +27,14 @@ from __future__ import annotations
 
 import time
 
-from fastapi import Depends, FastAPI, Header, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
+from fastapi.openapi.utils import get_openapi
+from fastapi.security import HTTPBasic, HTTPBearer
 from fastapi.responses import JSONResponse
 
 from . import cnpj as mod_cnpj
 from . import serpro, token as mod_token
+from . import esquemas
 from .conexao import ConexaoViva
 from .config import ConfigAPI
 from .credenciais import Credenciais
@@ -44,6 +47,19 @@ MENSAGENS = {
     404: "Nenhum registro encontrado para o CNPJ informado",
     500: "Ocorreu um erro interno inesperado",
 }
+
+
+DESCRICAO = """API de consulta ao CNPJ compatível com a Consulta CNPJ v2 do SERPRO: mesmos
+caminhos, mesmos nomes de campo, mesmos códigos de retorno.
+
+**Duas diferenças que nenhuma implementação fecha**, porque são da fonte e não
+do código:
+
+* o **CPF dos sócios vem mascarado** — a Receita publica `***794780**` nos
+  dados abertos; o SERPRO, como canal autorizado, devolve completo;
+* a base é um **retrato mensal**, não tempo real. Uma empresa aberta ontem não
+  está aqui, e uma baixa da semana passada ainda aparece ativa.
+"""
 
 
 class ErroAPI(Exception):
@@ -71,7 +87,16 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
         def consultar(cnpj_basico):
             return viva.executar(lambda con: _consultar(cnpj_basico, con=con))
 
-    app = FastAPI(title="CNPJ-XRay — Consulta CNPJ", version="2.0")
+    # `auto_error=False` porque quem decide o código é a API: sem isto o
+    # FastAPI devolveria 403 onde o contrato do SERPRO manda 401.
+    basic = HTTPBasic(auto_error=False, description="Consumer Key e Consumer Secret")
+    bearer = HTTPBearer(auto_error=False, description="Token obtido em POST /token")
+
+    app = FastAPI(
+        title="CNPJ-XRay — Consulta CNPJ",
+        version="2.0",
+        description=DESCRICAO,
+    )
 
     # Abertos na construção, não no lifespan. Nada aqui precisa de ciclo de
     # vida assíncrono -- SQLite abre conexão por chamada e o Log é um caminho --
@@ -82,6 +107,25 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
     app.state.credenciais = Credenciais(cfg.credenciais)
     app.state.log = Log(cfg.logs)
     app.state.estatisticas = Estatisticas(cfg.estatisticas)
+
+    # O FastAPI injeta 422 em toda rota com parâmetro, e esta API nunca o
+    # devolve: `ni` é string e não há validação que possa falhar antes do
+    # handler. Documentá-lo mandaria o cliente tratar um caso inexistente, e a
+    # promessa aqui é que só aparecem os códigos do contrato do SERPRO.
+    def _openapi_sem_422():
+        if app.openapi_schema:
+            return app.openapi_schema
+        spec = get_openapi(title=app.title, version=app.version,
+                           description=app.description, routes=app.routes)
+        for caminho in spec.get("paths", {}).values():
+            for operacao in caminho.values():
+                operacao.get("responses", {}).pop("422", None)
+        spec.get("components", {}).get("schemas", {}).pop("HTTPValidationError", None)
+        spec.get("components", {}).get("schemas", {}).pop("ValidationError", None)
+        app.openapi_schema = spec
+        return spec
+
+    app.openapi = _openapi_sem_422
 
     # -- erros ----------------------------------------------------------
 
@@ -96,8 +140,18 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
 
     # -- token ----------------------------------------------------------
 
-    @app.post("/token")
-    async def emitir_token(request: Request, authorization: str = Header(None)):
+    @app.post(
+        "/token",
+        response_model=esquemas.Token,
+        responses=esquemas.ERROS_TOKEN,
+        summary="Emite o token de acesso",
+        description="OAuth2 `client_credentials`. Envie "
+                    "`Authorization: Basic base64(ConsumerKey:ConsumerSecret)` "
+                    "e `grant_type=client_credentials`.",
+        tags=["autenticação"],
+    )
+    async def emitir_token(request: Request, credencial=Depends(basic)):
+        authorization = request.headers.get("authorization")
         try:
             chave, segredo = mod_token.credenciais_basic(authorization)
         except mod_token.TokenInvalido as e:
@@ -119,13 +173,14 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
 
     # -- autenticação das consultas -------------------------------------
 
-    async def autenticado(request: Request, authorization: str = Header(None)) -> str:
+    async def autenticado(request: Request, credencial=Depends(bearer)) -> str:
         """Devolve o consumer_key, ou levanta 401/403.
 
         A revogação é conferida aqui, e não só na emissão. O token é
         autocontido e valeria até expirar; como o armazenamento já está no
         caminho quente por causa do log, conferir o estado não custa nada novo.
         """
+        authorization = request.headers.get("authorization")
         try:
             bruto = mod_token.do_cabecalho(authorization)
             claims = mod_token.verificar(bruto, cfg.jwt_segredo)
@@ -181,15 +236,36 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
                                 content={"message": MENSAGENS.get(status, "Erro")})
         return JSONResponse(status_code=200, content=corpo)
 
-    @app.get("/v2/basica/{ni}")
+    @app.get(
+        "/v2/basica/{ni}",
+        response_model=esquemas.Basica,
+        responses=esquemas.ERROS_CONSULTA,
+        summary="Dados cadastrais, sem o quadro societário",
+        description="Equivale ao `/v2/basica/{ni}` do SERPRO. `ni` é o CNPJ com 14 dígitos.",
+        tags=["consulta"],
+    )
     async def basica(ni: str, request: Request, chave: str = Depends(autenticado)):
         return _responder(serpro.basica, ni, chave, "/v2/basica", request)
 
-    @app.get("/v2/qsa/{ni}")
+    @app.get(
+        "/v2/qsa/{ni}",
+        response_model=esquemas.QSA,
+        responses=esquemas.ERROS_CONSULTA,
+        summary="Quadro de sócios e administradores",
+        description="Equivale ao `/v2/qsa/{ni}` do SERPRO. O CPF dos sócios vem mascarado. `ni` é o CNPJ com 14 dígitos.",
+        tags=["consulta"],
+    )
     async def qsa(ni: str, request: Request, chave: str = Depends(autenticado)):
         return _responder(serpro.qsa, ni, chave, "/v2/qsa", request)
 
-    @app.get("/v2/empresa/{ni}")
+    @app.get(
+        "/v2/empresa/{ni}",
+        response_model=esquemas.Empresa,
+        responses=esquemas.ERROS_CONSULTA,
+        summary="Dados cadastrais e quadro societário",
+        description="Equivale ao `/v2/empresa/{ni}` do SERPRO. `ni` é o CNPJ com 14 dígitos.",
+        tags=["consulta"],
+    )
     async def empresa(ni: str, request: Request, chave: str = Depends(autenticado)):
         return _responder(serpro.empresa, ni, chave, "/v2/empresa", request)
 
