@@ -397,3 +397,20 @@ def test_estatisticas_gerais(cfg, gerente):
 
     assert r.json()["consultas"] == 2
     assert r.json()["porRota"] == {"/v2/basica": 1, "/v2/qsa": 1}
+
+
+def test_podar_sem_dias_recusa(gerente):
+    """Não há janela de retenção automática: apagar histórico é sempre ato
+    deliberado com o prazo dito na chamada. Assumir um padrão aqui apagaria
+    log por engano, e isso não tem desfazer."""
+    r = gerente.post("/manager/manutencao/podar")
+
+    assert r.status_code == 400
+    assert "dias" in r.json()["detail"]
+
+
+def test_podar_com_dias_explicito_funciona(gerente):
+    r = gerente.post("/manager/manutencao/podar?dias=30")
+
+    assert r.status_code == 200
+    assert r.json() == {"arquivosApagados": 0}

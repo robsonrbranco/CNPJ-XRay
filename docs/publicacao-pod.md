@@ -39,6 +39,50 @@ leitura**, com 4 leitores simultâneos. O volume de dados pode ser imutável.
 
 ### A imagem
 
+Construída e validada em 2026-09-20, num container Linux com a base montada
+read-only. O `Dockerfile` está na raiz do repositório.
+
+| | |
+|---|---|
+| tamanho | 590 MB |
+| Firebird | engine `libEngine12.so` + raiz completa (~9 MB) |
+| **sem** | executável do servidor, `security3.fdb`, `gbak`, `gfix`, `isql`, `fbstat` |
+| porta 3050 | não existe — não há servidor |
+
+Três coisas que só apareceram construindo, e cada uma custou um ciclo de
+diagnóstico porque a mensagem de erro aponta para o lugar errado:
+
+* **`FB_EMBEDDED=1` é obrigatório.** Sem ele o DSN sai como
+  `inet://localhost:3050/...`, o Dispatcher tenta o provider Remote e falha com
+  **"unavailable database"** — que não diz que o problema é a forma do caminho.
+* **A raiz do Firebird tem que ir inteira.** Copiar só o `libEngine12.so` dá
+  **"CHARACTER SET WIN1252 is not defined"**, que não menciona arquivo nenhum:
+  falta o `intl/libfbintl.so`, que implementa WIN1252 e a collation WIN_PTBR.
+* **`FIREBIRD` aponta para a RAIZ do engine**, não para o diretório de
+  configuração. Com `/etc/firebird/3.0` o engine procura `intl/` e
+  `firebird.msg` lá dentro e não acha — mesma mensagem do item anterior, causa
+  diferente.
+
+### O que a validação confirmou
+
+```
+embedded: True | dsn: /data/cnpj_xray.fdb
+
+/v2/basica/11222333000181   -> 200, esquema do SERPRO
+DV errado                   -> 400
+CNPJ válido sem registro    -> 404
+sem token                   -> 401
+/manager de fora do pod     -> inalcançável
+
+touch /data/teste           -> Read-only file system
+UPDATE na base              -> attempted update on read-only database
+```
+
+E o log analítico gravado com `faturavel` correto por código: 200 e 404
+faturáveis, 400 e 500 não.
+
+### O conteúdo da imagem
+
 ```
 libfbclient.so.2
 plugins/libEngine12.so

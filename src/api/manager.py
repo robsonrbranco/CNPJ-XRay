@@ -131,10 +131,19 @@ def criar_app(cfg: ConfigAPI) -> FastAPI:
 
     @app.post("/manager/manutencao/podar")
     async def podar(request: Request, dias: int | None = None):
-        """Apaga o analítico antigo já consolidado. O sintético permanece."""
-        apagados = request.app.state.estatisticas.podar(
-            cfg.logs, dias if dias is not None else cfg.retencao_dias
-        )
-        return {"arquivosApagados": apagados}
+        """Apaga o analítico já consolidado mais velho que `dias`.
+
+        **Nada poda sozinho.** Não há janela de retenção automática: o log
+        analítico é mantido indefinidamente, e apagá-lo é sempre um ato
+        deliberado com o prazo dito na chamada. `dias` sem valor, ou
+        `retencao_dias = 0`, recusa em vez de assumir um padrão -- apagar
+        histórico por engano não tem desfazer.
+        """
+        prazo = dias if dias is not None else cfg.retencao_dias
+        if not prazo:
+            raise HTTPException(
+                400, "informe 'dias': não há janela de retenção automática"
+            )
+        return {"arquivosApagados": request.app.state.estatisticas.podar(cfg.logs, prazo)}
 
     return app

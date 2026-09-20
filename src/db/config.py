@@ -99,14 +99,28 @@ class FirebirdConfig:
     # que o servidor usa (Firebird em container ou noutra máquina). Só importa
     # para a troca blue-green, que renomeia arquivos. Ver caminho_local().
     local_data_dir: str = ""
+    # Modo embedded: o engine roda DENTRO deste processo, sem servidor.
+    #
+    # Muda o DSN, e essa é a parte que morde: embedded exige caminho SEM host.
+    # Com `inet://host:porta/caminho` o Dispatcher tenta o provider Remote,
+    # não encontra servidor e devolve "unavailable database" -- erro que não
+    # diz que o problema foi a forma do caminho.
+    #
+    # É o modo do pod de consulta. O ETL continua falando com o servidor,
+    # porque carga em massa quer cache compartilhado e Force Write ajustável.
+    embedded: bool = False
 
     @property
     def dsn(self) -> str:
         """DSN no formato aceito pelo firebird-driver."""
+        if self.embedded:
+            return self.database
         return f"inet://{self.host}:{self.port}/{self.database}"
 
     def dsn_para(self, caminho: str) -> str:
         """DSN de outro arquivo de banco no mesmo servidor."""
+        if self.embedded:
+            return caminho
         return f"inet://{self.host}:{self.port}/{caminho}"
 
     def _irmao(self, sufixo: str) -> str:
@@ -183,6 +197,7 @@ def load_config() -> FirebirdConfig:
         database=database,
         user=_env("DB_USER", "SYSDBA"),
         password=_env("DB_PASSWORD", ""),
+        embedded=_env("FB_EMBEDDED", "").lower() in ("1", "true", "sim"),
         charset=_env("DB_CHARSET", "WIN1252"),
         collation=_env("DB_COLLATION", "WIN_PTBR"),
         page_size=_int_env("FB_PAGE_SIZE", DEFAULT_PAGE_SIZE),

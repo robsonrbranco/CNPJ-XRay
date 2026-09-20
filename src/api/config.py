@@ -29,7 +29,10 @@ class ConfigAPI:
     # aqui seria uma chave conhecida assinando tokens de produção.
     jwt_segredo: str
     validade_token_s: int = 3600
-    retencao_dias: int = 90
+    # 0 = nunca podar. O analítico é mantido indefinidamente por decisão
+    # explícita: nada apaga log sozinho. `/manager/manutencao/podar` continua
+    # existindo, mas exige o número de dias na chamada.
+    retencao_dias: int = 0
 
     @classmethod
     def do_ambiente(cls) -> "ConfigAPI":
@@ -47,5 +50,5 @@ class ConfigAPI:
             estatisticas=creds / "estatisticas.db",
             jwt_segredo=segredo,
             validade_token_s=int(_env("API_VALIDADE_TOKEN_S", "3600")),
-            retencao_dias=int(_env("API_RETENCAO_DIAS", "90")),
+            retencao_dias=int(_env("API_RETENCAO_DIAS", "0")),
         )

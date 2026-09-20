@@ -1,0 +1,10 @@
+bd/
+Download/
+logs/
+.git/
+.venv/
+__pycache__/
+*.pyc
+.env
+tests/
+.specs/
