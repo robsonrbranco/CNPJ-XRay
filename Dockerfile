@@ -87,9 +87,43 @@ RUN mkdir -p /tmp/firebird && chmod 1777 /tmp/firebird
 
 WORKDIR /app
 COPY pyproject.toml ./
+# MENOS pacotes do que o `pyproject.toml` declara, e isso e deliberado.
+#
+# O pod serve consulta e **nunca roda o ETL**. `polars` e `rich` sao do ETL e
+# da CLI, e nao entram. Medido dentro da imagem anterior:
+#
+#     _polars_runtime_32   172 MB
+#     polars                 9 MB
+#     pygments               9 MB   (dependencia do rich)
+#     rich                   3 MB
+#     ---------------------------
+#                          193 MB de site-packages
+#
+# Duas mudancas de CODIGO tiveram de vir antes, e sem elas isto nao funciona:
+#
+#   * `src/db/__init__.py` reexportava `.loader`, que importa `polars`. Como o
+#     `__init__` roda no primeiro import de qualquer submodulo, um inocente
+#     `from ..db import connection` arrastava os 181 MB;
+#   * `src/consulta/empresa.py` importava `rich` no topo para a saida da CLI, e
+#     a API importa esse modulo por causa de `consultar()`. Virou preguicoso.
+#
+# `tests/test_imagem_enxuta.py` trava as duas, rodando com os pacotes
+# INSTALADOS e reprovando se a superficie do pod encostar neles -- porque em
+# desenvolvimento o import passaria e o erro so apareceria ao subir o pod.
+#
+# `uvloop` (16 MB) FICA: ele troca o event loop do asyncio e e o pod usando.
+#
+# O `pip` sai depois de instalar. Um container de producao nao tem por que
+# carregar um instalador de pacotes.
+#
+# Nao se apaga `__pycache__` aqui: o pod tem `strategy: Recreate`, entao cada
+# deploy paga o start inteiro com a readiness esperando, e sem o .pyc cada
+# import recompila. Trocar disco por latencia de subida e o lado errado da
+# troca -- mas fica a nota de que foi considerado.
 RUN pip install --no-cache-dir \
-      "firebird-driver>=2.0.0" "python-dotenv>=1.0.0" "rich>=13.0.0" \
-      "polars>=1.42.1" "fastapi>=0.115.0" "uvicorn[standard]>=0.30.0"
+      "firebird-driver>=2.0.0" "python-dotenv>=1.0.0" \
+      "fastapi>=0.115.0" "uvicorn[standard]>=0.30.0" \
+ && pip uninstall -y pip setuptools wheel
 
 COPY src/ ./src/
 COPY --from=site /src/public/ ./site/

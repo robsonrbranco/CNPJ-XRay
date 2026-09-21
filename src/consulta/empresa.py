@@ -27,13 +27,32 @@ from contextlib import contextmanager
 from decimal import Decimal
 
 from dotenv import load_dotenv
-from rich.console import Console
-from rich.table import Table
 
 from ..db import connection
 
 load_dotenv()
-console = Console()
+
+
+# O `rich` NAO e importado no topo, e isto nao e estilo.
+#
+# A API importa este modulo por causa de `consultar()` e nunca chama `exibir()`
+# -- ela devolve JSON, nao tabela colorida. Um import no topo arrastaria
+# `rich` + `pygments` (12 MB) para dentro da imagem do pod, que nem terminal
+# tem. Medido: a imagem caiu 42% ao tirar isso e o `polars`.
+#
+# `tests/test_imagem_enxuta.py` trava a propriedade: roda com os dois
+# INSTALADOS e reprova se a superficie do pod encostar neles.
+_console = None
+
+
+def console():
+    """O Console do rich, criado na primeira vez que ha o que exibir."""
+    global _console
+    if _console is None:
+        from rich.console import Console
+
+        _console = Console()
+    return _console
 
 PORTE = {1: "Microempresa", 3: "Empresa de Pequeno Porte", 5: "Demais"}
 SITUACAO = {1: "NULA", 2: "ATIVA", 3: "SUSPENSA", 4: "INAPTA", 8: "BAIXADA"}
@@ -243,7 +262,9 @@ def consultar(cnpj_basico: str, con=None) -> dict:
 # apresentação
 # ---------------------------------------------------------------------------
 
-def _tabela(titulo: str) -> Table:
+def _tabela(titulo: str) -> "Table":
+    from rich.table import Table
+
     t = Table(title=titulo, show_header=False, box=None, title_justify="left")
     t.add_column(style="cyan", no_wrap=True)
     t.add_column(style="white")
@@ -262,10 +283,10 @@ def exibir(ficha: dict) -> None:
     t.add_row("Responsável", emp["qualificacao_responsavel_descricao"] or "—")
     if emp["ente_federativo_responsavel"]:
         t.add_row("Ente federativo", emp["ente_federativo_responsavel"])
-    console.print(t)
+    console().print(t)
 
     for est in ficha["estabelecimentos"]:
-        console.print()
+        console().print()
         t = _tabela(f"{est['tipo']} — {formatar_cnpj(est['cnpj_completo'])}")
         if est["nome_fantasia"]:
             t.add_row("Nome fantasia", est["nome_fantasia"])
@@ -296,10 +317,10 @@ def exibir(ficha: dict) -> None:
             t.add_row("Telefone", "  ".join(fones))
         if est["correio_eletronico"]:
             t.add_row("E-mail", est["correio_eletronico"])
-        console.print(t)
+        console().print(t)
 
     if ficha["socios"]:
-        console.print()
+        console().print()
         t = Table(title=f"SÓCIOS ({len(ficha['socios'])})", title_justify="left")
         for col in ("Nome", "Tipo", "CPF/CNPJ", "Qualificação", "Entrada", "Faixa etária"):
             t.add_column(col)
@@ -308,10 +329,10 @@ def exibir(ficha: dict) -> None:
                       s["qualificacao_descricao"] or "—",
                       str(s["data_entrada_sociedade"] or "—"),
                       s["faixa_etaria_descricao"])
-        console.print(t)
+        console().print(t)
 
     sim = ficha["simples"]
-    console.print()
+    console().print()
     t = _tabela("SIMPLES NACIONAL")
     if sim is None:
         t.add_row("Situação", "sem registro na tabela do Simples")
@@ -322,7 +343,7 @@ def exibir(ficha: dict) -> None:
         t.add_row("MEI", sim["opcao_mei_descricao"])
         t.add_row("Opção MEI", str(sim["data_opcao_mei"] or "—"))
         t.add_row("Exclusão MEI", str(sim["data_exclusao_mei"] or "—"))
-    console.print(t)
+    console().print(t)
 
 
 def _serializar(o):
@@ -343,12 +364,12 @@ def main() -> int:
     try:
         digitos = normalizar_cnpj(args.cnpj)
     except ValueError as e:
-        console.print(f"[bold red]{e}[/bold red]")
+        console().print(f"[bold red]{e}[/bold red]")
         return 2
 
     ficha = consultar(digitos[:8])
     if ficha["empresa"] is None:
-        console.print(f"[bold red]CNPJ {formatar_cnpj(digitos)} não está na base[/bold red]")
+        console().print(f"[bold red]CNPJ {formatar_cnpj(digitos)} não está na base[/bold red]")
         return 1
 
     if args.json:
