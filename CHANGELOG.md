@@ -9,6 +9,101 @@
 > quebrados e um registro falso. Para instruções válidas, ver o
 > [README](README.md) e o [CONFIGURACAO_INICIAL.md](CONFIGURACAO_INICIAL.md).
 
+## [3.1.0] - 2026-09-21
+
+A 3.0.0 entregou a base. Esta entrega o **serviço**: o Themis no ar em
+`themis.ecomciencia.com`, servindo 222.197.006 linhas da competência 2026-09.
+
+> **Nota de origem.** As entradas abaixo cobrem 16 entregas (#11 a #26) que
+> ficaram sem registro entre 18 e 21 de setembro, mais duas de 21/09. As
+> primeiras foram reconstruídas a partir do histórico de commits e dos
+> documentos do `infra-olympus`; os números foram conferidos contra o serviço
+> em execução onde era possível. Se alguma atribuição estiver torta, o commit
+> correspondente manda.
+
+### ✨ Novo
+
+- **API pública compatível com a Consulta CNPJ v2 do SERPRO** (#13): `POST
+  /token` e os três recortes — `/v2/basica/{ni}`, `/v2/qsa/{ni}`,
+  `/v2/empresa/{ni}`. Mesmos caminhos, mesmos nomes de campo, mesmos códigos.
+- **`/manager` em processo e porta separados** (#12, #17), não expostos. Uma
+  credencial capaz de criar credenciais seria escalada de privilégio, e não
+  publicar a porta é a única barreira que não depende de nenhum segredo estar
+  certo. Credenciais em SQLite com PBKDF2, log de uso em duas camadas e
+  estatísticas.
+- **Imagem do pod: Firebird 3.0 embedded** (#14). Sem servidor, sem porta 3050,
+  sem `security3.fdb`, sem credencial de banco. `ServerMode = Classic`, porque
+  em `Super` o primeiro worker toma o arquivo e os demais morrem no attach.
+- **A base carrega a própria proveniência** (#18), numa tabela `metadados`
+  dentro do `.fdb`, e a API a expõe em `GET /saude`. Sem isso, quem recebe uma
+  resposta não tem como saber de que competência é o dado.
+- **OpenAPI que descreve o contrato** (#16, #17), e não apenas lista as rotas.
+- **Publicação da base em partes comprimidas, paralelas e retomáveis** (#20).
+- **CI/CD no cluster Olympus** (#19, #26): testes, build, push para o ghcr.io,
+  `set image` nos dois containers do pod e conferência do `/saude`.
+- **Página de apresentação em `/`** (#25), compilada com Hugo e servida pela
+  própria aplicação — versionar as duas juntas é o que impede a página de
+  descrever uma API que já mudou.
+
+### ⚡ Decisões medidas
+
+- **Conexão viva por worker** (#15): a consulta caiu de ~1000 ms para **12 ms**
+  de mediana. Abrir attachment em embedded custa ~530 ms e a consulta indexada
+  custa fração de milissegundo — pagar o attachment por requisição era o
+  gargalo inteiro.
+- **A imagem caiu 42%: 140 MB → 81 MB** (21/09). O pod carregava o ETL e nunca
+  o roda. Saíram `polars` (181 MB), `rich` + `pygments` (12 MB) e `pip`
+  (12 MB); `site-packages` foi de 252 MB para 46 MB, e o pull de 17,3 s para
+  4,9 s.
+
+  Exigiu mudar **código antes do Dockerfile**, e é isso que a torna
+  interessante: `src/db/__init__.py` reexportava `carregar`/`normalizar` de
+  `.loader`, que importa `polars`. O `__init__` roda no primeiro import de
+  QUALQUER submódulo, então um inocente `from ..db import connection` — que é
+  o que `api/conexao.py` e `consulta/empresa.py` fazem — arrastava os 181 MB.
+  Os re-exports não serviam a ninguém: varredura em `src/` e `tests/` não achou
+  **um só** uso dos 17 nomes. O `rich` entrava por outro caminho, o import no
+  topo de `consulta/empresa.py`, e virou preguiçoso.
+
+- **A credencial do CI deixou de ser cluster-admin** (21/09). O
+  `KUBECONFIG_OLYMPUS` era o kubeconfig do k3s — `system:admin` em
+  `system:masters`, poder total sobre os sete serviços, guardado no secret de
+  um repositório **público**, e baseado em certificado X509 que o k3s não
+  revoga individualmente. No lugar, uma ServiceAccount que escreve **apenas no
+  `themis`**, por `resourceName`. Não houve mudança neste repositório: é o
+  valor do secret, e o manifest está em `k8s/themis-deployer-rbac.yaml` no
+  `infra-olympus`.
+
+### 🐛 Correções que custaram caro
+
+- **As partes da publicação não cabiam junto com a base antiga** (#23): a
+  ordem passou a apagar a base **antes** de transmitir. Com 34,2 GB contra a
+  folga do node, transmitir primeiro pode encher o disco — e disco cheio num
+  k3s não derruba só o Themis, gera `DiskPressure` e despeja os vizinhos.
+- **A confirmação do `/saude` batia num 403 do Cloudflare e culpava o
+  serviço** (#24). O `Python-urllib` é bloqueado; qualquer User-Agent nomeado
+  passa.
+- **`set image` tocava só um container** (#26). O `manager` ficava preso na tag
+  do manifest enquanto a API avançava, e os dois passariam a ler o mesmo
+  SQLite com códigos de versões diferentes — divergência que só apareceria na
+  gestão de credencial, meses depois.
+- **A consulta de fumaça do pod morria com `ModuleNotFoundError`** (21/09),
+  consequência do enxugamento da imagem. O passo 6 de
+  `docs/publicacao-pod.md` manda rodar `python -m src.consulta.empresa` dentro
+  do pod, e sem o `rich` isso quebra — no meio da publicação mensal, que é o
+  pior momento para um traceback que manda procurar no lugar errado. O doc
+  passou a usar `--json`, e a CLI explica em uma linha quando alguém esquece.
+
+  Nenhum teste de rota pegaria: a API nunca chama `exibir()`. Apareceu ao
+  rodar o procedimento documentado no pod de verdade.
+
+### 📊 Resultado
+
+**215 testes**, sem Firebird e sem rede. Serviço no ar, 2/2, com pipeline
+verde de ponta a ponta e imagem de 81 MB.
+
+---
+
 ## [3.0.0] - 2026-09-18
 
 Reescrita do projeto sobre **Firebird 3.0**. É uma mudança incompatível em
