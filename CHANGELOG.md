@@ -97,6 +97,25 @@ A 3.0.0 entregou a base. Esta entrega o **serviço**: o Themis no ar em
   Nenhum teste de rota pegaria: a API nunca chama `exibir()`. Apareceu ao
   rodar o procedimento documentado no pod de verdade.
 
+### 🔧 Arrumação
+
+- **A versão do pacote passou a acompanhar o CHANGELOG.** O `pyproject.toml`
+  ficou em `0.1.0` desde o primeiro commit enquanto este arquivo já registrava
+  quatro versões: duas fontes discordando sobre a mesma coisa, e a que um
+  `pip install` lê era a errada. Não é cosmético — `0.x` afirma "pré-1.0, sem
+  compromisso de compatibilidade" sobre um projeto com API pública em produção
+  e uma quebra já documentada (a 3.0.0). Quem pinasse por versão estaria
+  pinando uma afirmação falsa.
+
+  Entrou **nesta** entrada e não numa 3.1.1 porque uma 3.1.1 recriaria na hora
+  a divergência que ela corrige: não há tag `v3.1.0` publicada, então o topo do
+  CHANGELOG e o `version=` do pacote descrevem o mesmo estado.
+
+  Os `version=` de `src/api/publica.py` (2.0) e `src/api/manager.py` (1.0)
+  **não** mudaram. Aqueles versionam o contrato HTTP no OpenAPI, que tem ciclo
+  próprio; alinhá-los ao pacote faria a especificação anunciar uma versão de
+  API que nunca existiu.
+
 ### 📊 Resultado
 
 **215 testes**, sem Firebird e sem rede. Serviço no ar, 2/2, com pipeline
