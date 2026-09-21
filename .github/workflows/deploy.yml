@@ -84,8 +84,16 @@ jobs:
         run: |
           echo "${{ secrets.KUBECONFIG_OLYMPUS }}" > kubeconfig.yaml
           export KUBECONFIG=kubeconfig.yaml
+          # OS DOIS containers, não só o `themis`. O pod roda a API pública e
+          # o /manager a partir da MESMA imagem, com comandos diferentes.
+          # `set image` atualiza container por nome: esquecer o `manager` aqui
+          # o deixaria preso na tag do manifest enquanto a API avança, e os
+          # dois passariam a ler o mesmo SQLite com códigos de versões
+          # diferentes — divergência que só apareceria em gestão de credencial,
+          # meses depois.
           kubectl -n olympus set image deployment/themis \
-            themis=ghcr.io/robsonrbranco/cnpj-xray:${{ github.sha }}
+            themis=ghcr.io/robsonrbranco/cnpj-xray:${{ github.sha }} \
+            manager=ghcr.io/robsonrbranco/cnpj-xray:${{ github.sha }}
           # 300s e não 120s: a strategy é Recreate, então o pod antigo morre
           # antes de o novo subir, e o novo só fica ready depois de abrir o
           # attachment ao Firebird -- que custa ~530 ms.
