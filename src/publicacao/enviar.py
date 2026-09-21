@@ -368,20 +368,46 @@ def espaco_livre_no_host(d: Destino) -> int:
         return -1
 
 
+#: O `User-Agent` padrão do `urllib` é `Python-urllib/3.x`, e o Cloudflare o
+#: recusa com 403 `error code: 1010` — bloqueio por assinatura de cliente. Foi
+#: o que aconteceu na publicação de 2026-09: o serviço subiu certo e a
+#: confirmação reportou falha dez vezes seguidas.
+#:
+#: Medido no domínio em 21/09/2026: só o `Python-urllib` é barrado.
+#: `python-requests`, `curl`, `Java`, `Go-http-client`, `PostmanRuntime`,
+#: `axios` e `okhttp` recebem 200. Ou seja, isto atingia esta função, não os
+#: consumidores da API.
+AGENTE = "CNPJ-XRay-publicacao/1.0"
+
+
 def conferir_servico(d: Destino) -> int:
+    import urllib.error
     import urllib.request
+
     print(f"\nconferindo {d.url_saude} ...", flush=True)
+    pedido = urllib.request.Request(d.url_saude,
+                                    headers={"User-Agent": AGENTE})
     for tentativa in range(1, 11):
         try:
-            with urllib.request.urlopen(d.url_saude, timeout=20) as resp:
+            with urllib.request.urlopen(pedido, timeout=20) as resp:
                 corpo = json.load(resp)
             print(f"  {json.dumps(corpo, ensure_ascii=False)}", flush=True)
             if corpo.get("status") == "ok":
                 print(f"\nNO AR servindo a competência "
                       f"{corpo.get('competencia') or '?'}", flush=True)
                 return 0
+            print(f"  tentativa {tentativa}: status "
+                  f"{corpo.get('status')!r}", flush=True)
+        except urllib.error.HTTPError as e:
+            # O código importa: 503 é o pod ainda subindo, e vale esperar; 403
+            # é o Cloudflare barrando o cliente, e esperar não resolve. Dizer só
+            # "HTTPError" esconde essa diferença — foi o que me custou a
+            # investigação da publicação de 2026-09.
+            print(f"  tentativa {tentativa}: HTTP {e.code} "
+                  f"({e.headers.get('server') or '?'})", flush=True)
         except Exception as e:                               # noqa: BLE001
-            print(f"  tentativa {tentativa}: {type(e).__name__}", flush=True)
+            print(f"  tentativa {tentativa}: {type(e).__name__}: {e}",
+                  flush=True)
         time.sleep(10)
     print("\nO serviço NÃO confirmou. Investigue antes de dar por concluído.")
     return 1
