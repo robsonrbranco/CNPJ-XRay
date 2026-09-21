@@ -284,6 +284,47 @@ def test_enviar_segue_quando_o_disco_do_host_da(monkeypatch, tmp_path):
     assert any("scp" in str(c) for c in chamadas), "deveria ter transmitido"
 
 
+# ---------------------------------------------------------------------------
+# confirmação do serviço
+# ---------------------------------------------------------------------------
+
+def test_conferir_servico_manda_user_agent(monkeypatch):
+    """Sem `User-Agent` próprio, o urllib manda `Python-urllib/3.x` e o
+    Cloudflare responde 403 `error code: 1010`.
+
+    Aconteceu de verdade na publicação de 2026-09: o Themis subiu certo,
+    servindo a competência correta, e esta função reportou falha dez vezes.
+    Confirmação que falha com o serviço saudável é pior que confirmação
+    nenhuma — manda investigar o que está funcionando."""
+    import urllib.request
+
+    vistos = []
+
+    class RespostaFalsa:
+        def read(self, *a):
+            return b'{"status":"ok","competencia":"2026-09"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def falso_urlopen(pedido, **k):
+        vistos.append(pedido)
+        return RespostaFalsa()
+
+    monkeypatch.setattr(urllib.request, "urlopen", falso_urlopen)
+    monkeypatch.setenv("OLYMPUS_HOST", "exemplo")
+
+    assert mod.conferir_servico(mod.Destino.do_ambiente()) == 0
+
+    assert len(vistos) == 1
+    agente = vistos[0].get_header("User-agent")
+    assert agente, "o pedido saiu sem User-Agent"
+    assert "urllib" not in agente.lower(), agente
+
+
 def test_as_duas_pastas_do_host_sao_distintas(monkeypatch):
     """A base é trocada todo mês; credenciais e log não. Compartilhar a pasta
     faria um consumidor cadastrado sumir na virada."""
