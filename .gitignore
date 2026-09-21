@@ -118,7 +118,15 @@ venv.bak/
 .ropeproject
 
 # mkdocs documentation
-/site
+#
+# A regra `/site` vinha do template padrao de Python do GitHub e ignorava a
+# saida do mkdocs, que este projeto nunca usou. Removida porque passou a
+# colidir com `site/`, a fonte Hugo da pagina de apresentacao -- que precisa
+# ser versionada. A saida do Hugo nao aparece aqui: ela e gerada dentro do
+# Dockerfile e nunca existe na copia de trabalho.
+site/public/
+site/resources/
+site/.hugo_build.lock
 
 # mypy
 .mypy_cache/

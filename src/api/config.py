@@ -33,6 +33,9 @@ class ConfigAPI:
     # explícita: nada apaga log sozinho. `/manager/manutencao/podar` continua
     # existindo, mas exige o número de dias na chamada.
     retencao_dias: int = 0
+    # Pasta do site compilado pelo Hugo, servido em `/`. Vazio significa não
+    # montar nada — é o caso fora da imagem, onde a API roda sem página.
+    site_dir: str = ""
 
     @classmethod
     def do_ambiente(cls) -> "ConfigAPI":
@@ -51,4 +54,5 @@ class ConfigAPI:
             jwt_segredo=segredo,
             validade_token_s=int(_env("API_VALIDADE_TOKEN_S", "3600")),
             retencao_dias=int(_env("API_RETENCAO_DIAS", "0")),
+            site_dir=_env("API_SITE_DIR", ""),
         )

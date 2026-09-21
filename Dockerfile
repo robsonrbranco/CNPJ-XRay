@@ -24,6 +24,33 @@ RUN apt-get update -qq \
  && rm -rf /var/lib/apt/lists/*
 
 
+# A página de apresentação em https://themis.ecomciencia.com/.
+#
+# Compilada aqui e servida pela própria aplicação, em vez de por um pod nginx
+# à parte: a página documenta a API — tabela de endpoints, exemplo de
+# autenticação, as duas diferenças em relação ao SERPRO — e versionar as duas
+# juntas é o que impede a página de descrever uma API que já mudou.
+#
+# O custo é conhecido: `strategy: Recreate` no manifest, então corrigir uma
+# vírgula no texto reinicia o pod que serve a API. São segundos, e a alternativa
+# custaria uma segunda imagem no containerd, que divide disco com a base.
+FROM debian:bookworm-slim AS site
+
+RUN apt-get update -qq \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+      wget ca-certificates \
+ && HUGO_VERSION=$(wget -qO- https://api.github.com/repos/gohugoio/hugo/releases/latest \
+      | grep -oP '"tag_name": "v\K[^"]+') \
+ && wget -qO /tmp/hugo.tar.gz \
+      "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.tar.gz" \
+ && tar -xzf /tmp/hugo.tar.gz -C /usr/local/bin hugo \
+ && rm -rf /var/lib/apt/lists/* /tmp/hugo.tar.gz
+
+WORKDIR /src
+COPY site/ ./
+RUN hugo --minify
+
+
 FROM python:3.13-slim-bookworm
 
 # Bibliotecas de que o engine depende. Sem elas o libEngine12.so carrega e
@@ -65,6 +92,7 @@ RUN pip install --no-cache-dir \
       "polars>=1.42.1" "fastapi>=0.115.0" "uvicorn[standard]>=0.30.0"
 
 COPY src/ ./src/
+COPY --from=site /src/public/ ./site/
 
 # FIREBIRD é a RAIZ do engine, não o diretório de configuração. Apontá-lo para
 # /etc/firebird/3.0 faz o engine procurar `intl/` e `firebird.msg` lá dentro,
@@ -81,6 +109,7 @@ VOLUME ["/data", "/creds", "/logs"]
 
 ENV API_CREDENCIAIS_DIR=/creds \
     API_LOGS_DIR=/logs \
+    API_SITE_DIR=/app/site \
     DB_NAME=/data/cnpj_xray.fdb \
     DB_CHARSET=WIN1252 \
     DB_COLLATION=WIN_PTBR
