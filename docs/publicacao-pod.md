@@ -159,8 +159,13 @@ Reprovou: **não suba o pod**, recopie.
 ### 6. Consulta de fumaça
 
 ```bash
-python -m src.consulta.empresa 08314885
+python -m src.consulta.empresa 08314885 --json
 ```
+
+O `--json` não é preferência de formato: **a imagem do pod não instala
+`rich`**, porque ele custa 12 MB e serve só à CLI (ver o `pip install` do
+`Dockerfile`). A saída em tabela funciona na estação e não aqui. Rodando sem
+`--json` dentro do pod, a CLI diz isso em uma linha em vez de dar traceback.
 
 ### 7. Apagar o manifesto antigo do volume
 

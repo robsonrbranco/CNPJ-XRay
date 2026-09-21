@@ -375,7 +375,21 @@ def main() -> int:
     if args.json:
         print(json.dumps(ficha, ensure_ascii=False, indent=2, default=_serializar))
     else:
-        exibir(ficha)
+        try:
+            exibir(ficha)
+        except ImportError:
+            # Acontece DENTRO do pod, e so ali: a imagem nao instala `rich`
+            # (ver o comentario do `pip install` no Dockerfile). Um traceback
+            # de ModuleNotFoundError no meio da publicacao mensal manda quem
+            # esta operando procurar o problema no lugar errado.
+            print(
+                "Esta imagem nao tem `rich` — e o pod de consulta, que nao "
+                "carrega a CLI."
+                "\nUse --json, que nao depende dele:\n"
+                f"  python -m src.consulta.empresa {args.cnpj} --json",
+                file=sys.stderr,
+            )
+            return 2
     return 0
 
 
