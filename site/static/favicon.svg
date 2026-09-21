@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A balança de Têmis, na paleta da casa: fundo pinho, prato âmbar. -->
+  <rect width="32" height="32" rx="3" fill="#15332B"/>
+  <g stroke="#F7F4EE" stroke-width="1.6" stroke-linecap="round" fill="none">
+    <path d="M16 7v18"/>
+    <path d="M10 25h12"/>
+    <path d="M7 11h18"/>
+    <path d="M7 11l-3 6h6z"/>
+    <path d="M25 11l-3 6h6z"/>
+  </g>
+  <circle cx="16" cy="9" r="2.1" fill="#C9772E"/>
+</svg>

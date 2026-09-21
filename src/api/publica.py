@@ -26,11 +26,13 @@ mas introduziria um código que um cliente escrito para eles não espera.
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import HTTPBasic, HTTPBearer
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import cnpj as mod_cnpj
 from . import serpro, token as mod_token
@@ -310,5 +312,25 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
     )
     async def empresa(ni: str, request: Request, chave: str = Depends(autenticado)):
         return _responder(serpro.empresa, ni, chave, "/v2/empresa", request)
+
+    # A página de apresentação, em `/`.
+    #
+    # Montada DEPOIS de todas as rotas, e isso não é estilo: o Starlette
+    # percorre as rotas na ordem em que foram registradas, e um `Mount("/")`
+    # casa com qualquer caminho. Montado antes, engoliria `/token`, `/v2/...`,
+    # `/saude` e `/docs` — a API inteira viraria 404 de arquivo não encontrado.
+    #
+    # `html=True` faz `/` servir o `index.html` e dá o `404.html` do Hugo para
+    # caminho desconhecido. Cliente que erra a rota da API recebe HTML em vez
+    # de JSON, o que é o preço de servir as duas coisas no mesmo domínio; quem
+    # acerta a rota continua recebendo os erros no formato do SERPRO.
+    #
+    # Se a pasta não existir — que é o caso fora da imagem, em teste e em
+    # desenvolvimento — não monta nada. A API não depende da página para
+    # funcionar, e exigir um `hugo` instalado para rodar os testes seria
+    # amarrar as duas coisas pelo lado errado.
+    if cfg.site_dir and Path(cfg.site_dir).is_dir():
+        app.mount("/", StaticFiles(directory=cfg.site_dir, html=True),
+                  name="site")
 
     return app

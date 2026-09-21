@@ -1,0 +1,21 @@
+baseURL = "https://themis.ecomciencia.com/"
+# `locale`, e nao `languageCode`: depreciado no Hugo v0.158 e a
+# imagem sempre puxa a versao mais recente.
+locale = "pt-BR"
+title = "Themis — Consulta CNPJ"
+
+# Desliga o que não se usa aqui. Este site tem uma página só, e cada arquivo a
+# mais é um arquivo servido pela mesma aplicação que atende a API.
+disableKinds = ["taxonomy", "term", "RSS", "sitemap"]
+
+[params]
+  # Site key PÚBLICA do widget Turnstile, criada por `turnstile-themis.tf` no
+  # infra-olympus. Pública de propósito: a validação de verdade acontece no
+  # Worker, contra a secret key, que nunca sai de lá.
+  #
+  # Depois de aplicar o Terraform: `terraform output turnstile_themis_sitekey`.
+  turnstileSitekey = "0x4AAAAAAE-ylMOindqO-Dpl"
+
+  # Endpoint do Worker que valida o Turnstile e envia o e-mail. Não é rota da
+  # API: o Cloudflare intercepta este caminho antes de chegar ao pod.
+  endpointCredencial = "/api/credencial"

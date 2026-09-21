@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ .Site.Title }}</title>
+<meta name="description" content="{{ .Params.description }}">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Mesma paleta e tipografia do www.ecomciencia.com: os dois são da mesma
+     casa, e quem chega aqui vindo de lá deve reconhecer. */
+  :root{
+    --bg:#F7F4EE;
+    --bg-deep:#15332B;
+    --ink:#262622;
+    --pine:#1F6F5C;
+    --amber:#C9772E;
+    --line:#DAD4C4;
+    --paper-alt:#EFEBE1;
+    --radius:2px;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'IBM Plex Sans', sans-serif; line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .display{font-family:'Fraunces', serif;}
+  .mono{font-family:'IBM Plex Mono', monospace; letter-spacing:0.03em;}
+  a{color:var(--pine);}
+
+  .wrap{max-width:1000px; margin:0 auto; padding:0 32px;}
+
+  nav{
+    position:sticky; top:0; z-index:50;
+    display:flex; align-items:center; justify-content:space-between;
+    padding:16px 32px; background:rgba(247,244,238,0.92);
+    backdrop-filter:blur(6px); border-bottom:1px solid var(--line);
+  }
+  nav .marca{font-family:'Fraunces',serif; font-size:1.2rem; font-weight:600; color:var(--bg-deep); text-decoration:none;}
+  nav .marca span{color:var(--amber);}
+  nav .links{display:flex; gap:24px; align-items:center;}
+  nav .links a{
+    font-family:'IBM Plex Mono',monospace; font-size:0.75rem;
+    text-transform:uppercase; letter-spacing:0.1em; text-decoration:none; color:var(--ink);
+  }
+  nav .links a:hover{color:var(--pine);}
+  @media(max-width:720px){ nav{padding:12px 20px;} nav .links{gap:14px;} nav .links a{font-size:0.65rem;} }
+
+  header.hero{padding:72px 0 48px;}
+  .rotulo{
+    font-family:'IBM Plex Mono',monospace; font-size:0.72rem; letter-spacing:0.14em;
+    text-transform:uppercase; color:var(--amber); margin-bottom:18px;
+  }
+  h1{font-family:'Fraunces',serif; font-size:clamp(2.2rem,5vw,3.4rem); line-height:1.1; margin:0 0 20px; color:var(--bg-deep);}
+  .chamada{font-size:1.12rem; max-width:62ch; margin:0 0 28px;}
+
+  /* estado ao vivo */
+  .estado{
+    display:flex; flex-wrap:wrap; gap:28px; padding:20px 24px;
+    background:var(--paper-alt); border:1px solid var(--line); border-radius:var(--radius);
+  }
+  .estado div{min-width:120px;}
+  .estado dt{font-family:'IBM Plex Mono',monospace; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.1em; color:#6E6A5F; margin-bottom:4px;}
+  .estado dd{margin:0; font-family:'Fraunces',serif; font-size:1.3rem; color:var(--bg-deep);}
+  .pulso{display:inline-block; width:8px; height:8px; border-radius:50%; background:#9A9488; margin-right:7px;}
+  .pulso.ok{background:var(--pine);}
+  .pulso.ruim{background:#B3402B;}
+
+  section{padding:56px 0; border-top:1px solid var(--line);}
+  h2{font-family:'Fraunces',serif; font-size:1.7rem; color:var(--bg-deep); margin:0 0 8px;}
+  .sub{color:#5C584E; max-width:62ch; margin:0 0 28px;}
+
+  table{width:100%; border-collapse:collapse; font-size:0.94rem;}
+  th,td{text-align:left; padding:11px 10px; border-bottom:1px solid var(--line); vertical-align:top;}
+  th{font-family:'IBM Plex Mono',monospace; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.1em; color:#6E6A5F; font-weight:500;}
+  td code{font-family:'IBM Plex Mono',monospace; font-size:0.86rem; color:var(--bg-deep); background:var(--paper-alt); padding:2px 6px; border-radius:var(--radius);}
+
+  pre{
+    background:var(--bg-deep); color:#DCE8E2; padding:18px 20px; border-radius:var(--radius);
+    overflow-x:auto; font-family:'IBM Plex Mono',monospace; font-size:0.82rem; line-height:1.6;
+  }
+  pre .c{color:#8FC9B7;}
+
+  .cartoes{display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:18px;}
+  .cartao{padding:20px 22px; border:1px solid var(--line); border-radius:var(--radius); background:#fff;}
+  .cartao h3{margin:0 0 8px; font-family:'Fraunces',serif; font-size:1.1rem; color:var(--bg-deep);}
+  .cartao p{margin:0 0 14px; font-size:0.92rem; color:#5C584E;}
+  .cartao a{font-family:'IBM Plex Mono',monospace; font-size:0.76rem; text-transform:uppercase; letter-spacing:0.08em; text-decoration:none;}
+  .cartao a:hover{text-decoration:underline;}
+
+  .aviso{border-left:3px solid var(--amber); padding:4px 0 4px 18px; margin:0 0 22px; max-width:66ch;}
+  .aviso strong{color:var(--bg-deep);}
+
+  /* formulário */
+  #credencial{background:var(--bg-deep); color:#E8EFEB; border-top:none;}
+  #credencial h2{color:#fff;}
+  #credencial .sub{color:#A9C4B9;}
+  #cred-form{display:grid; grid-template-columns:1fr 1fr; gap:16px; max-width:760px;}
+  #cred-form .largo{grid-column:1 / -1;}
+  .campo label{display:block; font-family:'IBM Plex Mono',monospace; font-size:0.68rem; color:#8FC9B7; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.07em;}
+  .campo input, .campo select, .campo textarea{
+    width:100%; padding:11px 13px; background:rgba(255,255,255,0.06);
+    border:1px solid rgba(255,255,255,0.18); border-radius:var(--radius);
+    color:#fff; font-family:'IBM Plex Sans',sans-serif; font-size:0.94rem;
+  }
+  .campo input:focus, .campo select:focus, .campo textarea:focus{outline:none; border-color:var(--amber);}
+  .campo select option{background:var(--bg-deep);}
+  .aceite{display:flex; gap:10px; align-items:flex-start; font-size:0.86rem; color:#A9C4B9;}
+  .aceite input{width:auto; margin-top:3px;}
+  .botao{
+    padding:13px 26px; background:var(--amber); color:#fff; border:none; border-radius:var(--radius);
+    font-family:'IBM Plex Mono',monospace; font-size:0.78rem; text-transform:uppercase;
+    letter-spacing:0.1em; cursor:pointer;
+  }
+  .botao:disabled{opacity:0.5; cursor:not-allowed;}
+  #cred-status{font-size:0.9rem; margin:0;}
+  #cred-status.ok{color:#8FC9B7;}
+  #cred-status.erro{color:#F0A58C;}
+  @media(max-width:720px){ #cred-form{grid-template-columns:1fr;} .wrap{padding:0 20px;} }
+
+  footer{padding:36px 0 48px; font-size:0.84rem; color:#6E6A5F;}
+  footer a{color:#6E6A5F;}
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="marca" href="/">themis<span>.</span></a>
+  <div class="links">
+    <a href="#endpoints">Endpoints</a>
+    <a href="#documentacao">Documentação</a>
+    <a href="#limites">Limites</a>
+    <a href="#credencial">Credenciais</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <header class="hero">
+    <div class="rotulo">Ecomciencia · API pública</div>
+    <h1>Consulta de CNPJ sobre os dados abertos da Receita Federal</h1>
+    <p class="chamada">
+      Themis responde no mesmo contrato da <strong>Consulta CNPJ v2 do
+      SERPRO</strong>: mesmos caminhos, mesmos nomes de campo, mesmos códigos de
+      retorno. Um cliente escrito para a API deles funciona apontando para esta,
+      trocando a URL base e as credenciais.
+    </p>
+
+    <dl class="estado" id="estado">
+      <div>
+        <dt>Situação</dt>
+        <dd><span class="pulso" id="pulso"></span><span id="e-status">consultando…</span></dd>
+      </div>
+      <div>
+        <dt>Competência</dt>
+        <dd id="e-competencia">—</dd>
+      </div>
+      <div>
+        <dt>Registros</dt>
+        <dd id="e-linhas">—</dd>
+      </div>
+      <div>
+        <dt>Base construída em</dt>
+        <dd id="e-construida">—</dd>
+      </div>
+    </dl>
+  </header>
+
+  <section id="endpoints">
+    <h2>Endpoints</h2>
+    <p class="sub">
+      Autenticação OAuth2 <code>client_credentials</code>. O token é um Bearer
+      com validade de uma hora.
+    </p>
+
+    <table>
+      <thead>
+        <tr><th>Rota</th><th>Autenticação</th><th>Devolve</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>POST /token</code></td>
+          <td>Basic (Key/Secret)</td>
+          <td>Emite o Bearer</td>
+        </tr>
+        <tr>
+          <td><code>GET /v2/basica/{ni}</code></td>
+          <td>Bearer</td>
+          <td>Dados cadastrais, sem o quadro societário</td>
+        </tr>
+        <tr>
+          <td><code>GET /v2/qsa/{ni}</code></td>
+          <td>Bearer</td>
+          <td>Quadro de sócios e administradores</td>
+        </tr>
+        <tr>
+          <td><code>GET /v2/empresa/{ni}</code></td>
+          <td>Bearer</td>
+          <td>Cadastrais e quadro societário juntos</td>
+        </tr>
+        <tr>
+          <td><code>GET /saude</code></td>
+          <td>nenhuma</td>
+          <td>Competência em disco e sinal de vida</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2 style="margin-top:42px;">Como autenticar</h2>
+    <p class="sub">Dois passos: trocar a credencial pelo token, usar o token.</p>
+<pre><span class="c"># 1. Consumer Key e Secret viram um Bearer de 1 hora</span>
+curl -X POST https://themis.ecomciencia.com/token \
+  -H "Authorization: Basic $(echo -n 'SUA_KEY:SEU_SECRET' | base64)" \
+  -d 'grant_type=client_credentials'
+
+<span class="c"># {"access_token":"...","token_type":"Bearer","expires_in":3600,"scope":"default"}</span>
+
+<span class="c"># 2. A consulta</span>
+curl https://themis.ecomciencia.com/v2/empresa/00000000000191 \
+  -H "Authorization: Bearer SEU_TOKEN"</pre>
+  </section>
+
+  <section id="documentacao">
+    <h2>Documentação</h2>
+    <p class="sub">
+      A especificação é gerada a partir do próprio código, então ela descreve o
+      que está no ar agora — não uma versão anterior.
+    </p>
+    <div class="cartoes">
+      <div class="cartao">
+        <h3>Swagger UI</h3>
+        <p>Referência navegável, com os esquemas de cada resposta e a possibilidade de experimentar as chamadas.</p>
+        <a href="/docs">Abrir /docs →</a>
+      </div>
+      <div class="cartao">
+        <h3>ReDoc</h3>
+        <p>A mesma especificação em leitura corrida, melhor para ler de ponta a ponta antes de implementar.</p>
+        <a href="/redoc">Abrir /redoc →</a>
+      </div>
+      <div class="cartao">
+        <h3>OpenAPI 3.1</h3>
+        <p>O documento cru, para gerar cliente automaticamente ou importar no Postman e no Insomnia.</p>
+        <a href="/openapi.json">Baixar /openapi.json →</a>
+      </div>
+      <div class="cartao">
+        <h3>Situação do serviço</h3>
+        <p>Qual competência está sendo servida, quantos registros e quando a base foi construída.</p>
+        <a href="/saude">Consultar /saude →</a>
+      </div>
+    </div>
+  </section>
+
+  <section id="limites">
+    <h2>Duas diferenças em relação ao SERPRO</h2>
+    <p class="sub">
+      Nenhuma é defeito de implementação — são propriedades da fonte. Estão
+      documentadas no OpenAPI, no campo onde mordem, e ficam aqui porque mudam
+      o que dá para fazer com a resposta.
+    </p>
+
+    <div class="aviso">
+      <strong>O CPF dos sócios vem mascarado</strong> (<code>***794780**</code>).
+      É assim que o dado é publicado pela Receita Federal. O SERPRO, como canal
+      autorizado, devolve o número completo; esta API não tem acesso a ele.
+    </div>
+
+    <div class="aviso">
+      <strong>A base é um retrato mensal, não tempo real.</strong> Empresa
+      aberta ontem não está aqui; baixa da semana passada ainda aparece ativa.
+      O <code>/saude</code> informa a competência exata que está sendo servida,
+      para que a decisão de confiar no dado seja de quem consulta.
+    </div>
+  </section>
+
+</div>
+
+<section id="credencial">
+  <div class="wrap">
+    <h2>Solicitar credenciais</h2>
+    <p class="sub">
+      O acesso é liberado por credencial nominal — um Consumer Key e um Consumer
+      Secret por contratante. Preencha e retornamos por e-mail.
+    </p>
+
+    <form id="cred-form">
+      <div class="campo"><label for="f-razao">Razão social</label>
+        <input id="f-razao" name="razaoSocial" type="text" required autocomplete="organization"></div>
+
+      <div class="campo"><label for="f-cnpj">CNPJ</label>
+        <input id="f-cnpj" name="cnpj" type="text" inputmode="numeric" placeholder="00.000.000/0000-00" required></div>
+
+      <div class="campo"><label for="f-nome">Responsável</label>
+        <input id="f-nome" name="responsavel" type="text" required autocomplete="name"></div>
+
+      <div class="campo"><label for="f-email">E-mail corporativo</label>
+        <input id="f-email" name="email" type="email" required autocomplete="email"></div>
+
+      <div class="campo"><label for="f-telefone">Telefone</label>
+        <input id="f-telefone" name="telefone" type="tel" required autocomplete="tel"></div>
+
+      <div class="campo"><label for="f-volume">Consultas por mês (estimativa)</label>
+        <select id="f-volume" name="volume" required>
+          <option value="">selecione</option>
+          <option>até 1.000</option>
+          <option>1.001 a 10.000</option>
+          <option>10.001 a 100.000</option>
+          <option>acima de 100.000</option>
+        </select></div>
+
+      <div class="campo largo"><label for="f-finalidade">Finalidade do uso</label>
+        <textarea id="f-finalidade" name="finalidade" rows="3" required
+          placeholder="onde a consulta entra no seu processo"></textarea></div>
+
+      <div class="largo cf-turnstile" data-sitekey="{{ .Site.Params.turnstileSitekey }}" data-theme="dark"></div>
+
+      <div class="largo aceite">
+        <input id="f-aceite" name="aceite" type="checkbox" required>
+        <label for="f-aceite" style="text-transform:none; letter-spacing:0; font-family:inherit; font-size:0.86rem; color:#A9C4B9;">
+          Li e concordo com os <a href="https://www.ecomciencia.com/termos/" style="color:#8FC9B7;">termos de uso</a>
+          e com a <a href="https://www.ecomciencia.com/privacidade/" style="color:#8FC9B7;">política de privacidade</a>.
+        </label>
+      </div>
+
+      <div class="largo">
+        <button type="submit" class="botao" id="cred-botao">Solicitar credenciais</button>
+      </div>
+      <p class="largo" id="cred-status" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</section>
+
+<div class="wrap">
+  <footer>
+    Themis é operado pela <a href="https://www.ecomciencia.com/">Ecomciencia</a>
+    sobre os <a href="https://dadosabertos.rfb.gov.br/CNPJ/">dados abertos de CNPJ</a>
+    da Receita Federal. Serviço independente, sem vínculo com a RFB ou com o SERPRO.
+  </footer>
+</div>
+
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<script>
+(function(){
+  // --- estado ao vivo -------------------------------------------------------
+  // A página consulta o mesmo /saude que qualquer cliente consulta. Se ela
+  // mostrasse um número compilado na build, diria "2026-09" para sempre --
+  // inclusive no mês em que a publicação falhasse, que é justamente quando
+  // alguém precisa saber.
+  var pulso = document.getElementById('pulso');
+  var fmt = new Intl.NumberFormat('pt-BR');
+
+  fetch('/saude', {headers:{'Accept':'application/json'}})
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var ok = d.status === 'ok';
+      pulso.className = 'pulso ' + (ok ? 'ok' : 'ruim');
+      document.getElementById('e-status').textContent = ok ? 'no ar' : 'indisponível';
+      document.getElementById('e-competencia').textContent = d.competencia || '—';
+      document.getElementById('e-linhas').textContent =
+        d.linhas ? fmt.format(d.linhas) : '—';
+      if (d.construidaEm) {
+        document.getElementById('e-construida').textContent =
+          new Date(d.construidaEm).toLocaleDateString('pt-BR',
+            {day:'2-digit', month:'short', year:'numeric'});
+      }
+    })
+    .catch(function(){
+      pulso.className = 'pulso ruim';
+      document.getElementById('e-status').textContent = 'indisponível';
+    });
+
+  // --- solicitação de credencial -------------------------------------------
+  var form = document.getElementById('cred-form');
+  var botao = document.getElementById('cred-botao');
+  var status = document.getElementById('cred-status');
+
+  form.addEventListener('submit', function(ev){
+    ev.preventDefault();
+
+    var token = (window.turnstile && window.turnstile.getResponse) ?
+                window.turnstile.getResponse() : '';
+    if (!token) {
+      status.className = 'erro';
+      status.textContent = 'Conclua a verificação anti-spam antes de enviar.';
+      return;
+    }
+
+    botao.disabled = true;
+    status.className = '';
+    status.textContent = 'enviando…';
+
+    fetch('{{ .Site.Params.endpointCredencial }}', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        razaoSocial: form.razaoSocial.value,
+        cnpj: form.cnpj.value,
+        responsavel: form.responsavel.value,
+        email: form.email.value,
+        telefone: form.telefone.value,
+        volume: form.volume.value,
+        finalidade: form.finalidade.value,
+        turnstileToken: token
+      })
+    })
+    .then(function(r){
+      if (!r.ok) { throw new Error('http ' + r.status); }
+      return r.json();
+    })
+    .then(function(){
+      form.reset();
+      if (window.turnstile) { window.turnstile.reset(); }
+      status.className = 'ok';
+      status.textContent = 'Solicitação recebida. Respondemos no e-mail informado.';
+    })
+    .catch(function(){
+      status.className = 'erro';
+      status.textContent = 'Não foi possível enviar agora. Escreva para contato@ecomciencia.com.';
+    })
+    .finally(function(){ botao.disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>
