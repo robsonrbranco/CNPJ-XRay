@@ -132,6 +132,7 @@
   <a class="marca" href="/">themis<span>.</span></a>
   <div class="links">
     <a href="#endpoints">Endpoints</a>
+    <a href="#agentes">Agentes</a>
     <a href="#documentacao">Documentação</a>
     <a href="#limites">Limites</a>
     <a href="#credencial">Credenciais</a>
@@ -207,6 +208,11 @@
           <td>nenhuma</td>
           <td>Competência em disco e sinal de vida</td>
         </tr>
+        <tr>
+          <td><code>POST /mcp</code></td>
+          <td>Bearer (token MCP)</td>
+          <td>Camada MCP para agentes de IA — ver <a href="#agentes">abaixo</a></td>
+        </tr>
       </tbody>
     </table>
 
@@ -222,6 +228,111 @@ curl -X POST https://themis.ecomciencia.com/token \
 <span class="c"># 2. A consulta</span>
 curl https://themis.ecomciencia.com/v2/empresa/00000000000191 \
   -H "Authorization: Bearer SEU_TOKEN"</pre>
+  </section>
+
+  <section id="agentes">
+    <h2>Para agentes de IA: MCP</h2>
+    <p class="sub">
+      Além do contrato do SERPRO, o Themis fala o
+      <a href="https://modelcontextprotocol.io">Model Context Protocol</a> em
+      <code>POST /mcp</code> — o padrão aberto pelo qual plataformas agênticas
+      descobrem e usam ferramentas. O agente consulta CNPJ como uma ferramenta,
+      sem código de integração, e deixa de preencher razão social ou situação
+      cadastral de memória.
+    </p>
+
+    <div class="cartoes" style="grid-template-columns:repeat(auto-fit,minmax(200px,1fr));">
+      <div class="cartao">
+        <h3>Plugar e usar</h3>
+        <p>Registre a URL e o token no cliente MCP do agente. As ferramentas aparecem sozinhas, com descrição e parâmetros.</p>
+      </div>
+      <div class="cartao">
+        <h3>Segredo fora do modelo</h3>
+        <p>O token fica na configuração do cliente. O modelo vê as ferramentas, nunca a credencial.</p>
+      </div>
+      <div class="cartao">
+        <h3>Resposta feita para agente</h3>
+        <p>Enxuta, sem os campos que o contrato do SERPRO manda sempre nulos, com capital social exato e a competência do dado em toda resposta.</p>
+      </div>
+      <div class="cartao">
+        <h3>Salvaguardas no protocolo</h3>
+        <p>O servidor avisa ao modelo que a base é um retrato mensal, que texto de cadastro é dado e não instrução, e que base fora do ar é valor desconhecido — não dado inventado.</p>
+      </div>
+    </div>
+
+    <table style="margin-top:32px;">
+      <thead>
+        <tr><th>Ferramenta</th><th>O que faz</th><th>Cobrada</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>validar_cnpj</code></td>
+          <td>Confere o dígito verificador, numérico ou alfanumérico, sem consultar a base</td>
+          <td>não</td>
+        </tr>
+        <tr>
+          <td><code>situacao_cadastral</code></td>
+          <td>Resposta curta: razão social, matriz ou filial, situação com data e motivo, abertura e município</td>
+          <td>sim</td>
+        </tr>
+        <tr>
+          <td><code>consultar_empresa</code></td>
+          <td>Cadastro completo: natureza jurídica, porte, capital, endereço, contato, CNAEs e Simples. Sócios só com <code>incluir_socios</code></td>
+          <td>sim</td>
+        </tr>
+        <tr>
+          <td><code>themis://competencia</code></td>
+          <td>Recurso: competência, data de construção e tamanho da base servida</td>
+          <td>não</td>
+        </tr>
+      </tbody>
+    </table>
+
+<pre><span class="c"># OpenClaw</span>
+openclaw mcp add themis --url https://themis.ecomciencia.com/mcp \
+  --header "Authorization=Bearer SEU_TOKEN_MCP"
+
+<span class="c"># Claude Code</span>
+claude mcp add --transport http themis https://themis.ecomciencia.com/mcp \
+  --header "Authorization: Bearer SEU_TOKEN_MCP"
+
+<span class="c"># .mcp.json (Claude Code e clientes com o mesmo formato)</span>
+{"mcpServers": {"themis": {"type": "http",
+  "url": "https://themis.ecomciencia.com/mcp",
+  "headers": {"Authorization": "Bearer SEU_TOKEN_MCP"}}}}</pre>
+
+    <div class="aviso">
+      <strong>O token do MCP é outro.</strong> Não é o Bearer de uma hora do
+      <code>/token</code>: é emitido pela Ecomciencia para a sua credencial,
+      vale até um ano e só funciona em <code>/mcp</code> — as rotas REST o
+      recusam, e o <code>/mcp</code> recusa o token delas. Revogar a credencial
+      ou trocar o Consumer Secret o invalida na hora. Para obter, use o
+      <a href="#credencial">formulário abaixo</a> e diga na finalidade que o
+      uso é por agente (MCP).
+    </div>
+
+    <div class="aviso">
+      <strong>Sócio só quando a tarefa pede.</strong> O quadro societário traz
+      nome de pessoa física; <code>consultar_empresa</code> só o devolve com
+      <code>incluir_socios: true</code>, para não mandar dado pessoal ao
+      contexto do modelo — e ao provedor dele — sem necessidade.
+    </div>
+
+    <div class="aviso">
+      <strong>Junto com o Hestia, o agente confere o cadastro inteiro.</strong>
+      Com o <a href="https://hestia.ecomciencia.com/#agentes">Hestia</a>, a
+      consulta de CEP da mesma casa, um agente consulta o CNPJ aqui, pega o CEP
+      do endereço cadastrado e confere o logradouro nos Correios — as duas
+      fontes oficiais, sem ninguém no meio.
+    </div>
+
+    <div class="aviso">
+      <strong>Mesma cota, mesma cobrança, autenticação por cabeçalho.</strong>
+      Cada consulta pelo MCP conta como uma consulta da API. Funciona com
+      qualquer cliente MCP que envie cabeçalho de autorização — conferido com o
+      cliente oficial do protocolo e com o OpenClaw. Conectores que exigem
+      login OAuth ainda não são atendidos.
+    </div>
   </section>
 
   <section id="documentacao">

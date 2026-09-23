@@ -20,6 +20,10 @@ on:
     branches: [main]
     paths:
       - "src/**"
+      # A página em `/` é compilada NA IMAGEM (estágio `site` do Dockerfile) e
+      # servida pela API. Sem esta linha, uma mudança só no site nunca ia ao
+      # ar: o CEP-XRay já tinha, este não.
+      - "site/**"
       - "Dockerfile"
       - "docker/**"
       - "pyproject.toml"
