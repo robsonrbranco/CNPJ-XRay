@@ -293,7 +293,7 @@ def criar_app(cfg: ConfigAPI, consultar=None, metadados=None) -> FastAPI:
             request.app.state.log.registrar(
                 consumer_key=chave, rota=rota, status_http=status,
                 duracao_ms=int((time.perf_counter() - inicio) * 1000),
-                ni=mod_cnpj.so_digitos(ni_bruto) or None,
+                ni=mod_cnpj.limpar(ni_bruto) or None,
             )
 
         if status != 200:
@@ -306,7 +306,7 @@ def criar_app(cfg: ConfigAPI, consultar=None, metadados=None) -> FastAPI:
         response_model=esquemas.Basica,
         responses=esquemas.ERROS_CONSULTA,
         summary="Dados cadastrais, sem o quadro societário",
-        description="Equivale ao `/v2/basica/{ni}` do SERPRO. `ni` é o CNPJ com 14 dígitos.",
+        description="Equivale ao `/v2/basica/{ni}` do SERPRO. `ni` é o CNPJ com 14 posições — 12 letras ou dígitos e 2 dígitos verificadores —, com ou sem pontuação e em qualquer caixa.",
         tags=["consulta"],
     )
     async def basica(ni: str, request: Request, chave: str = Depends(autenticado)):
@@ -317,7 +317,7 @@ def criar_app(cfg: ConfigAPI, consultar=None, metadados=None) -> FastAPI:
         response_model=esquemas.QSA,
         responses=esquemas.ERROS_CONSULTA,
         summary="Quadro de sócios e administradores",
-        description="Equivale ao `/v2/qsa/{ni}` do SERPRO. O CPF dos sócios vem mascarado. `ni` é o CNPJ com 14 dígitos.",
+        description="Equivale ao `/v2/qsa/{ni}` do SERPRO. O CPF dos sócios vem mascarado. `ni` é o CNPJ com 14 posições — 12 letras ou dígitos e 2 dígitos verificadores —, com ou sem pontuação e em qualquer caixa.",
         tags=["consulta"],
     )
     async def qsa(ni: str, request: Request, chave: str = Depends(autenticado)):
@@ -328,7 +328,7 @@ def criar_app(cfg: ConfigAPI, consultar=None, metadados=None) -> FastAPI:
         response_model=esquemas.Empresa,
         responses=esquemas.ERROS_CONSULTA,
         summary="Dados cadastrais e quadro societário",
-        description="Equivale ao `/v2/empresa/{ni}` do SERPRO. `ni` é o CNPJ com 14 dígitos.",
+        description="Equivale ao `/v2/empresa/{ni}` do SERPRO. `ni` é o CNPJ com 14 posições — 12 letras ou dígitos e 2 dígitos verificadores —, com ou sem pontuação e em qualquer caixa.",
         tags=["consulta"],
     )
     async def empresa(ni: str, request: Request, chave: str = Depends(autenticado)):

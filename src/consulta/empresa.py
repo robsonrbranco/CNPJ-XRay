@@ -22,12 +22,14 @@ coisas mudaram além do dialeto, e ambas eram defeito lá:
 
 import argparse
 import json
+import re
 import sys
 from contextlib import contextmanager
 from decimal import Decimal
 
 from dotenv import load_dotenv
 
+from ..api.cnpj import limpar as limpar_cnpj
 from ..db import connection
 
 load_dotenv()
@@ -76,14 +78,23 @@ def formatar_cnpj(cnpj: str) -> str:
     return cnpj
 
 
+_CNPJ_BASICO = re.compile(r"[0-9A-Z]{8}", re.ASCII)
+_CNPJ_COMPLETO = re.compile(r"[0-9A-Z]{12}[0-9]{2}", re.ASCII)
+
+
 def normalizar_cnpj(entrada: str) -> str:
-    """Aceita CNPJ com ou sem pontuação, básico (8) ou completo (14)."""
-    digitos = "".join(c for c in entrada if c.isdigit())
-    if len(digitos) not in (8, 14):
+    """Aceita CNPJ com ou sem pontuação, básico (8) ou completo (14).
+
+    Pode ter letra (CNPJ alfanumérico): a limpeza é a mesma da API, que tira
+    só a pontuação — descartar letra transformaria o CNPJ em outro.
+    """
+    limpo = limpar_cnpj(entrada)
+    if not (_CNPJ_BASICO.fullmatch(limpo) or _CNPJ_COMPLETO.fullmatch(limpo)):
         raise ValueError(
-            f"CNPJ deve ter 8 dígitos (básico) ou 14 (completo), recebeu {len(digitos)}"
+            "CNPJ deve ter 8 posições (básico) ou 14 (completo), letras ou "
+            f"dígitos e DV numérico; recebeu {limpo!r}"
         )
-    return digitos
+    return limpo
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ ordem de quanto custaria errar:
 """
 
 import base64
+import copy
 import json
 import sys
 from datetime import date
@@ -35,6 +36,10 @@ NI = "11222333000181"
 NI_ESTAB_AUSENTE = "11222333000262"       # DV válido, estabelecimento ausente
 NI_DV_ERRADO = "11222333000182"
 NI_EMPRESA_AUSENTE = "11444777000161"      # DV válido, empresa inexistente
+# CNPJ alfanumérico: o exemplo do manual de DV da Receita.
+NI_ALFA = "12ABC34501DE35"
+NI_ALFA_AUSENTE = "12ABC34502DE06"         # DV válido, estabelecimento ausente
+NI_ALFA_DV_ERRADO = "12ABC34501DE36"
 
 
 def _ficha():
@@ -80,17 +85,30 @@ def _ficha():
     }
 
 
+def _ficha_alfa():
+    f = copy.deepcopy(_ficha())
+    f["cnpj_basico"] = f["empresa"]["cnpj_basico"] = "12ABC345"
+    f["empresa"]["razao_social"] = "ALFA LTDA"
+    f["estabelecimentos"][0].update(cnpj_basico="12ABC345", cnpj_ordem="01DE",
+                                    cnpj_dv="35", cnpj_completo=NI_ALFA)
+    return f
+
+
 class Base:
     def __init__(self):
         self.falhar = False
         self.leituras_metadados = 0
+        self.consultados = []
 
     def consultar(self, basico):
         if self.falhar:
             raise RuntimeError("attachment perdido")
+        self.consultados.append(basico)
         if basico == NI_EMPRESA_AUSENTE[:8]:
             return {"empresa": None, "estabelecimentos": [], "socios": [],
                     "cnaes_secundarios": {}, "simples": None}
+        if basico == NI_ALFA[:8]:
+            return _ficha_alfa()
         return _ficha()
 
     def metadados(self):
@@ -263,6 +281,51 @@ def test_validar_cnpj_nao_gera_linha_nem_esbarra_na_cota(amb):
     assert ruim["structuredContent"]["valido"] is False
     assert "verificador" in ruim["structuredContent"]["motivo"]
     assert _log(amb) == []
+
+
+def test_validar_cnpj_alfanumerico(amb):
+    tok = _token_mcp(amb)
+    ok = _chamar(amb, tok, "validar_cnpj", {"cnpj": "12.abc.345/01de-35"})
+    assert ok["structuredContent"] == {"cnpj": NI_ALFA, "valido": True,
+                                       "formatado": "12.ABC.345/01DE-35"}
+    ruim = _chamar(amb, tok, "validar_cnpj", {"cnpj": NI_ALFA_DV_ERRADO})
+    assert ruim["structuredContent"]["valido"] is False
+    assert "verificador" in ruim["structuredContent"]["motivo"]
+    malformado = _chamar(amb, tok, "validar_cnpj", {"cnpj": "12abc34501de3a"})
+    assert malformado["structuredContent"]["cnpj"] == "12ABC34501DE3A"
+    assert "malformado" in malformado["structuredContent"]["motivo"]
+    curto = _chamar(amb, tok, "validar_cnpj", {"cnpj": "12ABC345"})
+    assert "14 caracteres" in curto["structuredContent"]["motivo"]
+    assert _log(amb) == []
+
+
+@pytest.mark.parametrize("ferramenta", ["situacao_cadastral", "consultar_empresa"])
+def test_consulta_alfanumerica(amb, ferramenta):
+    res = _chamar(amb, _token_mcp(amb), ferramenta, {"cnpj": "12.abc.345/01de-35"})
+    assert res["isError"] is False
+    dados = res["structuredContent"]
+    assert dados["cnpj"] == NI_ALFA and dados["nomeEmpresarial"] == "ALFA LTDA"
+    assert amb.base.consultados == ["12ABC345"]
+    [l] = _log(amb)
+    assert l["status_http"] == 200 and l["ni"] == NI_ALFA
+
+
+def test_alfanumerico_ausente_e_resultado_faturavel(amb):
+    res = _chamar(amb, _token_mcp(amb), "situacao_cadastral", {"cnpj": NI_ALFA_AUSENTE})
+    assert res["structuredContent"] == {"encontrado": False, "cnpj": NI_ALFA_AUSENTE,
+                                        "competencia": "2026-09"}
+    [l] = _log(amb)
+    assert l["status_http"] == 404 and l["faturavel"] is True
+
+
+@pytest.mark.parametrize("cnpj", [NI_ALFA_DV_ERRADO, "11222333A000181"])
+def test_alfanumerico_invalido_e_falha_nao_faturavel(amb, cnpj):
+    """`11222333A000181` é o caso que a limpeza antiga respondia com a ACME."""
+    res = _chamar(amb, _token_mcp(amb), "situacao_cadastral", {"cnpj": cnpj})
+    assert res["isError"] is True
+    assert amb.base.consultados == []
+    [l] = _log(amb)
+    assert l["status_http"] == 400 and l["faturavel"] is False and l["ni"] == cnpj
 
 
 def test_dv_errado_na_consulta_e_falha_nao_faturavel(amb):
