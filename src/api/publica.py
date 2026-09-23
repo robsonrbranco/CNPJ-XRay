@@ -5,6 +5,9 @@
     GET  /v2/qsa/{ni}          quadro de sócios e administradores
     GET  /v2/empresa/{ni}      o conjunto completo
 
+    POST /mcp                  camada para agentes (MCP), com token próprio —
+                               ver `api/mcp.py`
+
 Esta aplicação **não** tem a rota `/manager`: gestão de credenciais roda noutra
 porta, não exposta. Uma credencial capaz de criar credenciais seria escalada de
 privilégio, e separar por processo é a única barreira que não depende de nenhum
@@ -35,6 +38,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import cnpj as mod_cnpj
+from . import mcp as mod_mcp
 from . import serpro, token as mod_token
 from . import esquemas
 from .conexao import ConexaoViva
@@ -71,12 +75,16 @@ class ErroAPI(Exception):
         super().__init__(self.mensagem)
 
 
-def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
+def criar_app(cfg: ConfigAPI, consultar=None, metadados=None) -> FastAPI:
     """Monta a aplicação.
 
     `consultar` é injetável para o teste rodar sem Firebird. O padrão é a
     consulta real; substituí-la não muda nenhum caminho de código testado
     abaixo, só de onde o dado vem.
+
+    `metadados` idem: devolve a proveniência da base (competência, data de
+    construção). Só a camada MCP a usa — o `/saude` lê a mesma coisa pela
+    conexão, junto com a flag de somente-leitura.
     """
     # Conexão viva por worker. Abrir attachment em embedded custa ~387 ms e a
     # consulta indexada custa 0,4 ms -- sem isto a API paga o attachment a cada
@@ -88,6 +96,11 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
 
         def consultar(cnpj_basico):
             return viva.executar(lambda con: _consultar(cnpj_basico, con=con))
+
+    if metadados is None and viva is not None:
+        def metadados():
+            from ..db import manage
+            return viva.executar(manage.ler_metadados)
 
     # `auto_error=False` porque quem decide o código é a API: sem isto o
     # FastAPI devolveria 403 onde o contrato do SERPRO manda 401.
@@ -106,6 +119,8 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
     # devolve um objeto quebrado. Cada worker constrói o seu, e é isso que
     # dispensa lock no log: nenhum arquivo é compartilhado entre processos.
     app.state.conexao = viva
+    app.state.consultar = consultar
+    app.state.metadados = metadados
     app.state.credenciais = Credenciais(cfg.credenciais)
     app.state.log = Log(cfg.logs)
     app.state.estatisticas = Estatisticas(cfg.estatisticas)
@@ -231,6 +246,12 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
         except mod_token.TokenInvalido as e:
             raise ErroAPI(401) from e
 
+        # Token com `aud` é do MCP (ver `api/mcp.py`): vive até 365 dias e foi
+        # emitido para agentes, não para o contrato do SERPRO. Aceitá-lo aqui
+        # daria a um token de meses o alcance das rotas REST.
+        if "aud" in claims:
+            raise ErroAPI(401)
+
         chave = claims.get("sub", "")
         try:
             cred = request.app.state.credenciais.obter(chave)
@@ -312,6 +333,11 @@ def criar_app(cfg: ConfigAPI, consultar=None) -> FastAPI:
     )
     async def empresa(ni: str, request: Request, chave: str = Depends(autenticado)):
         return _responder(serpro.empresa, ni, chave, "/v2/empresa", request)
+
+    # A camada para agentes, em `/mcp`. Fica fora do OpenAPI: o OpenAPI
+    # documenta o contrato do SERPRO, e o MCP é contrato nosso. Não é montada
+    # sem `cfg.mcp_uri`. Registrada antes do site pela razão abaixo.
+    mod_mcp.registrar(app, cfg)
 
     # A página de apresentação, em `/`.
     #
