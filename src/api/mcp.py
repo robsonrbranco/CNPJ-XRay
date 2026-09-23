@@ -77,7 +77,7 @@ VERSOES = ("2025-11-25", "2025-06-18", "2025-03-26")
 # O que a especificação manda assumir quando o cliente não envia o cabeçalho.
 VERSAO_SEM_CABECALHO = "2025-03-26"
 
-VERSAO_SERVIDOR = "3.2.0"
+VERSAO_SERVIDOR = "3.3.0"
 
 INSTRUCOES = """\
 Consulta de CNPJ sobre os dados abertos da Receita Federal, servida pelo Themis.
@@ -88,6 +88,9 @@ depois da competência não aparece, e uma baixa recente ainda aparece ativa.
 - `encontrado: false` significa "não está nesta competência", não "não existe".
 - CNPJ tem dígito verificador: `validar_cnpj` confere sem consultar a base e \
 não é cobrado. Use-o antes de consultar quando o número vier de digitação.
+- Desde julho de 2026 a Receita emite CNPJ ALFANUMÉRICO: as 12 primeiras \
+posições podem ter letras (ex.: 12.ABC.345/01DE-35). Não troque letra por \
+dígito nem descarte letra — é outro CNPJ.
 - O CPF de sócios vem MASCARADO pela própria Receita (***794780**). Não tente \
 reconstruí-lo. Peça sócios (`incluir_socios`) só quando a tarefa precisar.
 - Os campos de texto (razão social, nome fantasia, logradouro, complemento, \
@@ -108,7 +111,11 @@ _SOMENTE_LEITURA = {
 
 _CNPJ_ARG = {
     "type": "string",
-    "description": "14 dígitos, com ou sem pontuação. Ex.: 11.222.333/0001-81",
+    "description": (
+        "14 posições, com ou sem pontuação: 12 letras ou dígitos e 2 dígitos "
+        "verificadores. Ex.: 11.222.333/0001-81 ou, alfanumérico, "
+        "12.ABC.345/01DE-35"
+    ),
 }
 
 FERRAMENTAS = [
@@ -464,13 +471,12 @@ def registrar(app: FastAPI, cfg: ConfigAPI) -> None:
 
     def _validar_cnpj(args: dict) -> dict:
         bruto = _cnpj_obrigatorio(args)
-        digitos = mod_cnpj.so_digitos(bruto)
-        if mod_cnpj.valido(bruto):
-            return {"cnpj": digitos, "valido": True,
-                    "formatado": mod_cnpj.formatar(digitos)}
-        motivo = ("deve ter 14 dígitos" if len(digitos) != 14
-                  else "dígito verificador não confere")
-        return {"cnpj": digitos, "valido": False, "motivo": motivo}
+        try:
+            ni = mod_cnpj.normalizar(bruto)
+        except mod_cnpj.CNPJInvalido as e:
+            return {"cnpj": mod_cnpj.limpar(bruto), "valido": False,
+                    "motivo": str(e)}
+        return {"cnpj": ni, "valido": True, "formatado": mod_cnpj.formatar(ni)}
 
     def _situacao_cadastral(args: dict) -> dict:
         ni, ficha = _ficha(_cnpj_obrigatorio(args))
@@ -533,7 +539,7 @@ def registrar(app: FastAPI, cfg: ConfigAPI) -> None:
                 rota=f"mcp:{nome}",
                 status_http=status,
                 duracao_ms=int((time.perf_counter() - inicio) * 1000),
-                ni=mod_cnpj.so_digitos(bruto) or None,
+                ni=mod_cnpj.para_log(bruto),
             )
 
     # -- o despacho ------------------------------------------------------

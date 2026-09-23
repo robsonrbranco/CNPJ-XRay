@@ -12,8 +12,8 @@ Três endpoints, três recortes do mesmo dado:
 
 Uma diferença de forma entre as duas pontas
 -------------------------------------------
-`consultar()` recebe o CNPJ básico (8 dígitos) e devolve **todos** os
-estabelecimentos. O SERPRO recebe o `ni` completo (14 dígitos) e responde sobre
+`consultar()` recebe o CNPJ básico (8 posições) e devolve **todos** os
+estabelecimentos. O SERPRO recebe o `ni` completo (14 posições) e responde sobre
 **um**. A seleção acontece aqui, e um `ni` bem formado cujo estabelecimento não
 existe é `EstabelecimentoNaoEncontrado` — que o chamador traduz para 404.
 
@@ -73,6 +73,10 @@ def _dominio(codigo, descricao) -> dict | None:
 
 
 def _selecionar(ficha: dict, ni: str) -> dict:
+    # A ordem pode ter letra (CNPJ alfanumérico). A comparação aqui é sensível
+    # a caixa e a do banco (WIN_PTBR) não, mas as duas pontas chegam em
+    # maiúsculas: `ni` por `cnpj.normalizar`, e a base porque a Receita só
+    # emite letra maiúscula e publica assim (`00000000;E08G;12`, 2026-09).
     ordem, dv = ni[8:12], ni[12:]
     for est in ficha["estabelecimentos"]:
         if est["cnpj_ordem"] == ordem and est["cnpj_dv"] == dv:

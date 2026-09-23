@@ -9,6 +9,99 @@
 > quebrados e um registro falso. Para instruções válidas, ver o
 > [README](README.md) e o [CONFIGURACAO_INICIAL.md](CONFIGURACAO_INICIAL.md).
 
+## [3.3.0] - 2026-09-23
+
+### 🐛 Corrigido
+
+- **CNPJ alfanumérico.** Até a 3.2.0, `api/cnpj.py` só aceitava dígitos, e a
+  competência servida **já tem** um CNPJ com letra: `00.000.000/E08G-12`, a
+  filial do Banco do Brasil que foi o primeiro CNPJ alfanumérico emitido
+  (31/07/2026). O Themis respondia 400 para ela no REST e falha de ferramenta
+  no MCP. Agora responde 200 nos dois.
+- **Letra era descartada da entrada.** A limpeza tirava tudo que não fosse
+  dígito, então `11222333A000181` virava `11222333000181` e respondia — e
+  cobrava — por outra empresa. Agora só a pontuação sai; letra fica e é
+  validada.
+
+### 📚 A regra, com fonte
+
+- **IN RFB nº 2.229, de 15/10/2024** (altera a IN RFB nº 2.119/2022). Página
+  da Receita:
+  https://www.gov.br/receitafederal/pt-br/acesso-a-informacao/acoes-e-programas/programas-e-atividades/cnpj-alfanumerico
+- **Formato e DV** — manual "Cálculo dos dígitos verificadores de CNPJ
+  alfanumérico" (SERPRO, publicado pela Receita), conferido página a página:
+  "doze caracteres alfanuméricos e dois dígitos verificadores numéricos"; a
+  tabela de valores vai de `0`–`9` a `A`–`Z` maiúsculas, valor = código ASCII
+  menos 48 (`A` = 17 … `Z` = 42); módulo 11 com os pesos de sempre, resto 0 ou
+  1 dá DV 0. O exemplo resolvido, `12ABC34501DE` → `35`, e o CNPJ real
+  `00000000E08G` → `12` estão nos testes.
+  https://www.gov.br/receitafederal/pt-br/centrais-de-conteudo/publicacoes/documentos-tecnicos/cnpj/manual-dv-cnpj.pdf
+- **Os numéricos existentes continuam válidos, com os mesmos DV** — e como
+  ASCII−48 de um dígito é o próprio dígito, o cálculo deles não muda. Perguntas
+  e Respostas da Receita (que também pede aos sistemas que aceitem todas as
+  letras, sem exclusão):
+  https://www.gov.br/receitafederal/pt-br/centrais-de-conteudo/publicacoes/perguntas-e-respostas/cnpj/cnpj-alfanumerico.pdf
+- **Primeiro emitido:**
+  https://www.gov.br/receitafederal/pt-br/assuntos/noticias/2026/julho/receita-federal-gera-o-primeiro-cnpj-em-formato-alfanumerico
+- **SERPRO:** o FAQ da Consulta CNPJ responde "O CNPJ alfanumérico tem impacto
+  na consulta CNPJ?" com "Não." — `ni` já era string no contrato deles.
+  https://apicenter.estaleiro.serpro.gov.br/documentacao/consulta-cnpj/pt/faq/
+- **Dados abertos: sem documento oficial.** O layout (`cnpj-metadados.pdf`)
+  ainda chama `CNPJ BÁSICO` de "oito primeiros dígitos", e não há nota técnica
+  sobre o formato. O que existe é o dado: a 2026-09 já entrega a letra no
+  mesmo CSV, na mesma coluna, em maiúscula.
+
+### 📏 Medido na competência 2026-09
+
+Nos 31 `.zip` de `empresa`, `estabelecimento`, `socios` e `simples`, na
+estação (não no pod), com um regex por linha sobre o `.zip` — 1m50s:
+
+| | linhas |
+|---|---|
+| total | 222.189.606 |
+| CNPJ numérico | 222.189.598 |
+| CNPJ com letra | **1** — `"00000000";"E08G";"12"`, `Estabelecimentos5.zip` |
+| continuação de linha (valor com quebra de linha entre aspas) | 7 |
+| sócio PJ com letra em `cnpj_cpf_socio` | 0 de 735.147 |
+
+A linha está na base carregada (conferido por consulta indexada na cópia
+local), e o recorte SERPRO dela sai certo: ATIVA desde 31/07/2026, Brasília.
+
+### 🔧 Decisões registradas
+
+- **Nada muda na base nem no ETL.** `cnpj_basico`, `cnpj_ordem` e `cnpj_dv` já
+  eram `VARCHAR(8/4/2)`, a leitura já trazia tudo como texto e a carga só faz
+  `strip`. `cnpj_cpf_socio` (`VARCHAR(14)`) também comporta um sócio PJ
+  alfanumérico. O collation `WIN_PTBR` compara sem caixa, então a consulta
+  acha a linha mesmo com a entrada em minúsculas.
+- **Minúscula é aceita e normalizada**, como a pontuação. O código de
+  referência da Receita recusa minúscula; aqui ela sobe para maiúscula, e a
+  forma que sai (e vai para o log) é sempre a canônica.
+- **Só a–z ASCII sobe de caixa, e o formato é conferido em ASCII.** `str.upper()`
+  transformaria `ß` em `SS` e `\d` aceitaria `٣`: os dois fariam um caractere
+  inválido virar CNPJ válido. `0831488500010²`, que antes dava 500, agora é 400.
+- **`so_digitos()` saiu**, substituída por `limpar()`, para ninguém voltar a
+  usá-la em CNPJ. A CLI (`python -m src.consulta.empresa`) usa a mesma limpeza.
+- **As mensagens mudaram:** "14 caracteres (12 letras ou dígitos e 2 dígitos
+  verificadores)" e "malformado" no lugar de "14 dígitos". O REST devolve a
+  mensagem fixa do SERPRO e não é afetado; muda o texto do MCP.
+
+- **O `ni` do log de uso só grava o que tem forma de CNPJ** (`para_log()`),
+  mesmo com DV errado. Como `limpar()` preserva letra, gravar o valor limpo
+  direto poria no log qualquer texto livre do cliente, sem teto de tamanho —
+  e, pelo MCP, um modelo pode pôr o nome de uma pessoa no argumento `cnpj`. O
+  log não tem retenção automática. Fora da forma de CNPJ, `ni` fica `null`.
+  Veio da revisão do PR.
+
+### 📊 Resultado
+
+- 270 testes (24 novos). Os numéricos são conferidos contra uma cópia literal
+  do cálculo anterior em 200 mil bases sorteadas: DV idêntico em todas.
+- Quatro sabotagens, cada uma reprovando testes: voltar a descartar letra (19
+  falhas), letra valendo base 36 em vez de ASCII-48 (13), tirar a checagem de
+  formato (2), trocar a subida de caixa ASCII por `str.upper()` (1).
+- REST e MCP de ponta a ponta sobre a cópia local da base 2026-09.
+
 ## [3.2.0] - 2026-09-23
 
 ### ✨ Novo

@@ -11,6 +11,7 @@ conveniência, a separação de portas vira decoração.
 """
 
 import base64
+import copy
 import json
 import sys
 from datetime import date
@@ -29,6 +30,11 @@ from src.api.credenciais import Credenciais  # noqa: E402
 NI = "11222333000181"
 NI_INEXISTENTE = "11222333000262"          # DV válido, estabelecimento ausente
 NI_DV_ERRADO = "11222333000182"
+
+# CNPJ alfanumérico: o exemplo do manual de DV da Receita.
+NI_ALFA = "12ABC34501DE35"
+NI_ALFA_AUSENTE = "12ABC34502DE06"         # DV válido, estabelecimento ausente
+NI_ALFA_DV_ERRADO = "12ABC34501DE36"
 
 
 def _ficha():
@@ -73,6 +79,15 @@ def _ficha():
     }
 
 
+def _ficha_alfa():
+    f = copy.deepcopy(_ficha())
+    f["cnpj_basico"] = f["empresa"]["cnpj_basico"] = "12ABC345"
+    f["empresa"]["razao_social"] = "ALFA LTDA"
+    f["estabelecimentos"][0].update(cnpj_basico="12ABC345", cnpj_ordem="01DE",
+                                    cnpj_dv="35", cnpj_completo=NI_ALFA)
+    return f
+
+
 @pytest.fixture
 def cfg(tmp_path):
     return ConfigAPI(
@@ -88,10 +103,17 @@ def ambiente(cfg):
     cofre = Credenciais(cfg.credenciais)
     cred, secret = cofre.criar("ACME Ltda", quota_mensal=None)
 
-    app = publica.criar_app(cfg, consultar=lambda basico: _ficha())
+    consultados = []
+
+    def consultar(basico):
+        consultados.append(basico)
+        return _ficha_alfa() if basico == NI_ALFA[:8] else _ficha()
+
+    app = publica.criar_app(cfg, consultar=consultar)
     cliente = TestClient(app, raise_server_exceptions=False)
     return {"cfg": cfg, "cofre": cofre, "cliente": cliente,
-            "key": cred.consumer_key, "secret": secret}
+            "key": cred.consumer_key, "secret": secret,
+            "consultados": consultados}
 
 
 def _basic(chave: str, segredo: str) -> dict:
@@ -286,6 +308,56 @@ def test_404_e_registrado_como_faturavel(ambiente):
     linha = _linhas_do_log(ambiente["cfg"])[0]
     assert linha["status_http"] == 404
     assert linha["faturavel"] is True
+
+
+# ---------------------------------------------------------------------------
+# CNPJ alfanumérico
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("rota", ["/v2/basica", "/v2/qsa", "/v2/empresa"])
+def test_alfanumerico_responde_nas_tres_rotas(ambiente, rota):
+    r = ambiente["cliente"].get(f"{rota}/{NI_ALFA}", headers=_bearer(ambiente))
+
+    assert r.status_code == 200
+    assert r.json()["ni"] == NI_ALFA
+    assert r.json()["nomeEmpresarial"] == "ALFA LTDA"
+    assert ambiente["consultados"] == ["12ABC345"]
+
+
+def test_alfanumerico_em_minusculas_consulta_e_responde_em_maiusculas(ambiente):
+    r = ambiente["cliente"].get("/v2/basica/12abc34501de35", headers=_bearer(ambiente))
+
+    assert r.status_code == 200
+    assert r.json()["ni"] == NI_ALFA
+    assert ambiente["consultados"] == ["12ABC345"]
+    assert _linhas_do_log(ambiente["cfg"])[0]["ni"] == NI_ALFA
+
+
+def test_alfanumerico_com_dv_errado_da_400_nao_faturavel(ambiente):
+    r = ambiente["cliente"].get(f"/v2/basica/{NI_ALFA_DV_ERRADO}", headers=_bearer(ambiente))
+
+    assert r.status_code == 400
+    assert ambiente["consultados"] == []
+    linha = _linhas_do_log(ambiente["cfg"])[0]
+    assert linha["faturavel"] is False and linha["ni"] == NI_ALFA_DV_ERRADO
+
+
+def test_alfanumerico_bem_formado_e_ausente_da_404_faturavel(ambiente):
+    r = ambiente["cliente"].get(f"/v2/basica/{NI_ALFA_AUSENTE}", headers=_bearer(ambiente))
+
+    assert r.status_code == 404
+    assert _linhas_do_log(ambiente["cfg"])[0]["faturavel"] is True
+
+
+def test_letra_no_meio_de_cnpj_numerico_da_400_e_nao_casa_com_outro(ambiente):
+    """Antes da 3.3.0 a letra era descartada: `11222333A000181` virava
+    `11222333000181` e respondia 200 com a ACME — outra empresa, cobrado."""
+    r = ambiente["cliente"].get("/v2/basica/11222333A000181", headers=_bearer(ambiente))
+
+    assert r.status_code == 400
+    assert ambiente["consultados"] == []
+    # 15 posições não têm forma de CNPJ: o log registra a chamada, sem o valor.
+    assert _linhas_do_log(ambiente["cfg"])[0]["ni"] is None
 
 
 def _linhas_do_log(cfg) -> list[dict]:
