@@ -70,6 +70,27 @@ própria Receita** (`***794780**`). `consultar_empresa` só o devolve com
 `incluir_socios: true`: o padrão é não mandar dado pessoal para o contexto de
 um modelo — e, por ele, para o provedor desse modelo — sem que a tarefa peça.
 
+### CNPJ alfanumérico (3.3.0)
+
+As três ferramentas aceitam o CNPJ alfanumérico da IN RFB nº 2.229/2024: 12
+posições com letra ou dígito e 2 dígitos verificadores, calculados pelo módulo
+11 de sempre com cada caractere valendo o código ASCII menos 48. O primeiro foi
+emitido em 31/07/2026 (`00.000.000/E08G-12`, filial do Banco do Brasil) e já
+está na competência 2026-09.
+
+- Entrada com ou sem pontuação e em qualquer caixa; a saída (`cnpj`, `ni` do
+  log) é sempre em maiúsculas, sem pontuação.
+- **Letra nunca é descartada.** Até a 3.2.0 a limpeza tirava tudo que não
+  fosse dígito, e `11222333A000181` virava `11222333000181` — outra empresa,
+  consultada e cobrada. Agora é `CNPJ inválido` (400, não cobrado).
+- `validar_cnpj` diz o motivo: comprimento, formato (letra no DV, caractere
+  fora de `A-Z`/`0-9`) ou dígito verificador.
+- As instruções do servidor avisam o modelo de que letra num CNPJ é legítima e
+  não deve ser trocada por dígito.
+
+A regra, as fontes e a medição sobre os dados abertos estão no CHANGELOG da
+3.3.0 e no docstring de `src/api/cnpj.py`.
+
 ## O token
 
 | | token do REST | token do MCP |
@@ -124,9 +145,6 @@ registraram uma linha cada, com a credencial do agente.
 
 ## Em aberto
 
-- **CNPJ alfanumérico.** A Receita passou a emitir CNPJ com letras a partir de
-  julho de 2026, e `api/cnpj.py` só aceita dígitos. Afeta o REST e o MCP
-  igualmente; é mudança própria, de algoritmo de dígito verificador e de ETL.
 - **A revisão 2026-07-28** do protocolo, `outputSchema` — os mesmos pontos em
   aberto do CEP-XRay.
 - **O núcleo de `mcp.py` está duplicado** entre os dois projetos, com os mesmos
