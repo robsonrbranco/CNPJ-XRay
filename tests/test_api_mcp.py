@@ -325,7 +325,20 @@ def test_alfanumerico_invalido_e_falha_nao_faturavel(amb, cnpj):
     assert res["isError"] is True
     assert amb.base.consultados == []
     [l] = _log(amb)
-    assert l["status_http"] == 400 and l["faturavel"] is False and l["ni"] == cnpj
+    assert l["status_http"] == 400 and l["faturavel"] is False
+    # DV errado tem forma de CNPJ e entra; 15 posições não têm, e não entram.
+    assert l["ni"] == (cnpj if cnpj == NI_ALFA_DV_ERRADO else None)
+
+
+def test_texto_livre_no_argumento_cnpj_nao_vai_para_o_log(amb):
+    """Um modelo pode pôr um nome no argumento `cnpj`. O log não tem retenção
+    automática, então nome de pessoa não pode ficar gravado ali."""
+    res = _chamar(amb, _token_mcp(amb), "situacao_cadastral",
+                  {"cnpj": "Maria Aparecida da Silva"})
+    assert res["isError"] is True
+    [l] = _log(amb)
+    assert l["status_http"] == 400 and l["ni"] is None
+    assert "Maria" not in json.dumps(l)
 
 
 def test_dv_errado_na_consulta_e_falha_nao_faturavel(amb):

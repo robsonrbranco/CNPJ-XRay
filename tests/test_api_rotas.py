@@ -356,7 +356,8 @@ def test_letra_no_meio_de_cnpj_numerico_da_400_e_nao_casa_com_outro(ambiente):
 
     assert r.status_code == 400
     assert ambiente["consultados"] == []
-    assert _linhas_do_log(ambiente["cfg"])[0]["ni"] == "11222333A000181"
+    # 15 posições não têm forma de CNPJ: o log registra a chamada, sem o valor.
+    assert _linhas_do_log(ambiente["cfg"])[0]["ni"] is None
 
 
 def _linhas_do_log(cfg) -> list[dict]:

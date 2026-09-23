@@ -539,7 +539,7 @@ def registrar(app: FastAPI, cfg: ConfigAPI) -> None:
                 rota=f"mcp:{nome}",
                 status_http=status,
                 duracao_ms=int((time.perf_counter() - inicio) * 1000),
-                ni=mod_cnpj.limpar(bruto) or None,
+                ni=mod_cnpj.para_log(bruto),
             )
 
     # -- o despacho ------------------------------------------------------

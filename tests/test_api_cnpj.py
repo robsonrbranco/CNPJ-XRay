@@ -20,6 +20,7 @@ from src.api.cnpj import (  # noqa: E402
     formatar,
     limpar,
     normalizar,
+    para_log,
     partes,
     valido,
 )
@@ -218,3 +219,18 @@ def test_numericos_normalizam_como_antes():
         ("08314885/0002-96", "08314885000296"),
     ):
         assert normalizar(entrada) == esperado
+
+
+@pytest.mark.parametrize("entrada, esperado", [
+    ("08.314.885/0001-05", "08314885000105"),       # numérico, pontuado
+    ("12.abc.345/01de-35", "12ABC34501DE35"),       # alfanumérico, minúsculo
+    ("12ABC34501DE36", "12ABC34501DE36"),           # DV errado: tem forma, entra
+    ("11222333A000181", None),                      # 15 posições
+    ("Maria da Silva", None),                       # texto livre
+    ("A" * 5000, None),                             # sem teto de tamanho, antes
+    ("", None),
+    ("0831488500010", None),                        # 13 posições
+    ("12ABC34501DEAB", None),                       # DV com letra
+])
+def test_para_log_so_deixa_passar_forma_de_cnpj(entrada, esperado):
+    assert para_log(entrada) == esperado

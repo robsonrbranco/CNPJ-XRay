@@ -293,7 +293,7 @@ def criar_app(cfg: ConfigAPI, consultar=None, metadados=None) -> FastAPI:
             request.app.state.log.registrar(
                 consumer_key=chave, rota=rota, status_http=status,
                 duracao_ms=int((time.perf_counter() - inicio) * 1000),
-                ni=mod_cnpj.limpar(ni_bruto) or None,
+                ni=mod_cnpj.para_log(ni_bruto),
             )
 
         if status != 200:

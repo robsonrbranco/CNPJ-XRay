@@ -86,6 +86,13 @@ local), e o recorte SERPRO dela sai certo: ATIVA desde 31/07/2026, Brasília.
   verificadores)" e "malformado" no lugar de "14 dígitos". O REST devolve a
   mensagem fixa do SERPRO e não é afetado; muda o texto do MCP.
 
+- **O `ni` do log de uso só grava o que tem forma de CNPJ** (`para_log()`),
+  mesmo com DV errado. Como `limpar()` preserva letra, gravar o valor limpo
+  direto poria no log qualquer texto livre do cliente, sem teto de tamanho —
+  e, pelo MCP, um modelo pode pôr o nome de uma pessoa no argumento `cnpj`. O
+  log não tem retenção automática. Fora da forma de CNPJ, `ni` fica `null`.
+  Veio da revisão do PR.
+
 ### 📊 Resultado
 
 - 270 testes (24 novos). Os numéricos são conferidos contra uma cópia literal

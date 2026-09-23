@@ -61,6 +61,23 @@ def limpar(valor: str) -> str:
     return "".join(c for c in valor if c.isalnum()).translate(_MAIUSCULAS)
 
 
+def para_log(valor: str) -> str | None:
+    """O que vai para o campo `ni` do log de uso: o CNPJ, e só ele.
+
+    Devolve o valor limpo quando ele tem FORMA de CNPJ — 12 letras ou dígitos e
+    2 dígitos —, mesmo com DV errado: é o que permite investigar a reclamação de
+    um 400. Qualquer outra coisa vira `None`.
+
+    O motivo é que `limpar` preserva letra, e o log não tem retenção automática
+    (é mantido indefinidamente, por decisão). Gravar `limpar()` direto poria no
+    log o texto livre que o cliente mandar, sem limite de tamanho — e, pelo MCP,
+    um modelo pode pôr o nome de uma pessoa no argumento `cnpj`. Antes da 3.3.0
+    só entravam dígitos; agora só entra o que é, ou parece, um CNPJ.
+    """
+    limpo = limpar(valor)
+    return limpo if _FORMATO.fullmatch(limpo) else None
+
+
 def _valor(caractere: str) -> int:
     # Regra da Receita: código ASCII menos 48. Para dígito, é o próprio dígito.
     return ord(caractere) - 48
