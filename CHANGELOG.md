@@ -9,6 +9,45 @@
 > quebrados e um registro falso. Para instruções válidas, ver o
 > [README](README.md) e o [CONFIGURACAO_INICIAL.md](CONFIGURACAO_INICIAL.md).
 
+## [3.2.0] - 2026-09-23
+
+### ✨ Novo
+
+- **Camada MCP para agentes, em `POST /mcp`.** Porte do piloto validado no
+  CEP-XRay (Hestia 0.3.0). Três ferramentas — `validar_cnpj`,
+  `situacao_cadastral` e `consultar_empresa` — e o recurso
+  `themis://competencia`, com resposta enxuta: capital social em reais exato
+  (texto, sem float), domínios reduzidos à descrição onde ela basta, e sem os
+  campos que o contrato do SERPRO manda sempre nulos. Detalhes em `docs/mcp.md`.
+
+- **Token próprio do MCP, emitido pelo `/manager`.** Novo
+  `POST /manager/credenciais/{key}/token-mcp`, de 1 a 365 dias, com `aud` e
+  `gen`. Cada porta recusa o token da outra, e um token emitido para o Hestia
+  não vale no Themis (audiência diferente). Revogar ou rotacionar derruba o
+  token de longa duração na hora.
+
+### 🔧 Decisões registradas
+
+- **Sócio é dado pessoal, e não vai por padrão.** `consultar_empresa` só
+  devolve o quadro societário com `incluir_socios: true`.
+- **`validar_cnpj` não é cobrado nem consome cota**: confere o dígito
+  verificador sem encostar na base, então não é consulta.
+- **O CNPJ vai para o log, como no REST** — ao contrário do CEP no Hestia: um
+  CNPJ identifica uma empresa, e o registro é o que permite investigar uma
+  reclamação de cobrança.
+- **`token.py`, `credenciais.py` e `manager.py` voltam a ser idênticos aos do
+  CEP-XRay** (o manager, exceto o título). O núcleo de `mcp.py` também é o
+  mesmo; mudança nele tem que ir para os dois projetos.
+
+### 📊 Resultado
+
+- 246 testes (31 novos). Quatro proteções sabotadas uma a uma — audiência no
+  MCP, audiência no REST, geração do segredo e o padrão `incluir_socios=false`
+  — e cada sabotagem reprovou o teste que a protege.
+- Conformidade conferida contra o cliente oficial (SDK `mcp` 2.2.0):
+  negociação de 2025-11-25, as três ferramentas e o recurso; `validar_cnpj` sem
+  linha de log, as consultas com linha faturável e o `ni`.
+
 ## [3.1.0] - 2026-09-21
 
 A 3.0.0 entregou a base. Esta entrega o **serviço**: o Themis no ar em

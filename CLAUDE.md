@@ -47,6 +47,8 @@ estrago em vez de abortar por causa dele.
 | `src/etl/pipeline.py` | as 11 fases da construção |
 | `src/blue_green/` | validação, troca de arquivo e modos de acesso |
 | `src/consulta/empresa.py` | ficha de empresa por CNPJ |
+| `src/api/publica.py` | as rotas do contrato do SERPRO, o `/saude` e o OpenAPI |
+| `src/api/mcp.py` | a camada MCP para agentes (`POST /mcp`), com token de audiência própria — ver `docs/mcp.md` |
 
 ## Comandos
 

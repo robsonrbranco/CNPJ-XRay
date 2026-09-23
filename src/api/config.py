@@ -36,6 +36,12 @@ class ConfigAPI:
     # Pasta do site compilado pelo Hugo, servido em `/`. Vazio significa não
     # montar nada — é o caso fora da imagem, onde a API roda sem página.
     site_dir: str = ""
+    # URI canônica do endpoint MCP, ex.: `https://themis.ecomciencia.com/mcp`.
+    # É a AUDIÊNCIA dos tokens do MCP (claim `aud`): quem valida e quem emite
+    # precisam concordar com ela byte a byte, então ela vem de um lugar só — o
+    # `ENV` do Dockerfile. Vazio desliga o MCP: a rota não é montada e o
+    # /manager recusa emitir token, em vez de emitir um sem audiência.
+    mcp_uri: str = ""
 
     @classmethod
     def do_ambiente(cls) -> "ConfigAPI":
@@ -55,4 +61,5 @@ class ConfigAPI:
             validade_token_s=int(_env("API_VALIDADE_TOKEN_S", "3600")),
             retencao_dias=int(_env("API_RETENCAO_DIAS", "0")),
             site_dir=_env("API_SITE_DIR", ""),
+            mcp_uri=_env("API_MCP_URI", "").rstrip("/"),
         )

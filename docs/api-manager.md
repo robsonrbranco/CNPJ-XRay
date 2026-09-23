@@ -83,6 +83,12 @@ como recuperar, e é assim que deve ser.
 **Rotação troca o segredo mantendo a chave.** O cliente atualiza um valor, não
 dois, e o histórico de uso continua ligado à mesma credencial.
 
+**O token do MCP é emitido aqui, e só aqui.** Ele vive meses, e um token
+de meses é coisa que só o operador cunha — a API pública emite apenas o
+token de uma hora do contrato do SERPRO. Ele cai na hora se a credencial
+for revogada ou suspensa, e cai também se o segredo for rotacionado.
+Detalhes em `docs/mcp.md`.
+
 **Revogar não apaga.** `status` e `revogada_em` em vez de `DELETE`: o uso
 histórico daquela credencial continua íntegro nas estatísticas. Credencial
 apagada deixaria buraco no relatório do mês.
@@ -102,6 +108,7 @@ parte nossa.
 | `GET` | `/manager/credenciais/{key}` | consulta uma |
 | `PATCH` | `/manager/credenciais/{key}` | altera dados do contratante, quota, status |
 | `POST` | `/manager/credenciais/{key}/rotacionar` | novo segredo, mesma chave |
+| `POST` | `/manager/credenciais/{key}/token-mcp` | token de longa duração para o `/mcp`; `?dias=` de 1 a 365, padrão 90 — ver `docs/mcp.md` |
 | `DELETE` | `/manager/credenciais/{key}` | revoga (não apaga) |
 | `GET` | `/manager/estatisticas` | sintético geral |
 | `GET` | `/manager/estatisticas/{key}` | sintético de uma credencial |
