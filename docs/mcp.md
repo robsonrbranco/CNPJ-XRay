@@ -115,6 +115,13 @@ negociação de 2025-11-25, as três ferramentas e o recurso. `validar_cnpj` nã
 gerou linha de log; `situacao_cadastral` e `consultar_empresa` geraram linha
 faturável com o CNPJ em `ni`.
 
+E em produção, no mesmo dia, contra o **cliente do OpenClaw 2026.9.5** do
+Cerbero, pelo endereço interno: sonda e `probe` com as três ferramentas, e um
+turno real do agente que **cruzou os dois serviços** — consultou o CNPJ aqui,
+tirou o CEP do endereço cadastrado e o conferiu no Hestia, concluindo que o
+logradouro da Receita bate com o dos Correios. Os logs dos dois pods
+registraram uma linha cada, com a credencial do agente.
+
 ## Em aberto
 
 - **CNPJ alfanumérico.** A Receita passou a emitir CNPJ com letras a partir de
