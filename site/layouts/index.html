@@ -402,7 +402,12 @@ claude mcp add --transport http themis https://themis.ecomciencia.com/mcp \
         <input id="f-razao" name="razaoSocial" type="text" required autocomplete="organization"></div>
 
       <div class="campo"><label for="f-cnpj">CNPJ</label>
-        <input id="f-cnpj" name="cnpj" type="text" inputmode="numeric" placeholder="00.000.000/0000-00" required></div>
+        <!-- Sem inputmode="numeric": no celular ele abre so o teclado de
+             numeros, e o CNPJ alfanumerico (IN RFB 2.229/2024, emitido
+             desde julho de 2026) tem letras nas 12 primeiras posicoes.
+             autocapitalize sobe a caixa enquanto se digita; o Worker que
+             recebe o POST aceita as duas. -->
+        <input id="f-cnpj" name="cnpj" type="text" autocapitalize="characters" autocomplete="off" spellcheck="false" maxlength="18" placeholder="00.000.000/0000-00 ou 12.ABC.345/01DE-35" required></div>
 
       <div class="campo"><label for="f-nome">Responsável</label>
         <input id="f-nome" name="responsavel" type="text" required autocomplete="name"></div>
